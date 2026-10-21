@@ -1,0 +1,7 @@
+朋友联机（Supabase Realtime）配置简要：
+1. https://supabase.com 注册，New Project，Region 选 Northeast Asia (Singapore) 或 Southeast Asia
+2. Project Settings → API → 复制 Project URL 与 anon public key
+3. 打开 App → 朋友联机大厅 → 若未配置则进入联机设置，粘贴 URL/Key，设昵称
+4. 朋友使用同一套 URL/Key；选同一桌号，全员点准备后自动开赛（扣 100 金币，空位补 AI）
+
+无需自建服务器；Realtime Presence/Broadcast 即可。

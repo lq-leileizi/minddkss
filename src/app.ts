@@ -3,6 +3,7 @@ import {
   ENTRY_FEE,
   MAX_HANDS,
   PRIZE,
+  TABLE_COUNT,
   blindsForHand,
 } from "./config";
 import { cardLabel, isRed, type Card } from "./game/cards";
@@ -18,10 +19,28 @@ import {
   humanAct,
   isHumanBusted,
   isHumanTurn,
+  isRemoteHumanTurn,
   startHand,
   type ActInfo,
   type Tournament,
 } from "./game/tournament";
+import {
+  getNickname,
+  loadNetConfig,
+  saveNetConfig,
+  setNickname,
+} from "./net/config";
+import { joinLobby, type LobbyHandle } from "./net/lobby";
+import {
+  allHumansReady,
+  joinTable,
+  type RoomHandle,
+  type RoomMember,
+} from "./net/room";
+import { isNetConfigured, resetSupabase } from "./net/supabase";
+import { applyPublicState, serializePublic } from "./net/sync";
+import type { GameMsg } from "./net/types";
+import { getPlayerId } from "./net/config";
 import { SKINS } from "./shop/catalog";
 import {
   buySkin,
@@ -39,9 +58,15 @@ import {
   unlockAudio,
 } from "./audio";
 
-type Screen = "lobby" | "shop" | "table" | "result";
+type Screen =
+  | "lobby"
+  | "shop"
+  | "onlineSetup"
+  | "onlineLobby"
+  | "onlineRoom"
+  | "table"
+  | "result";
 
-/** 思考停顿；真正节奏由荷官语音控 */
 const BOT_DELAY_MIN = 350;
 const BOT_DELAY_MAX = 700;
 const CHIP_FLY_MS = 520;
@@ -61,6 +86,18 @@ export function boot(root: HTMLElement) {
   let raiseOpen = false;
   let autoSettleScheduled = false;
 
+  /** 联机 */
+  let onlineMatch = false;
+  let lobbyH: LobbyHandle | null = null;
+  let roomH: RoomHandle | null = null;
+  let roomMembers: RoomMember[] = [];
+  let tableCounts: number[] = Array(TABLE_COUNT).fill(0);
+  let currentTableNo = 0;
+  let guestLegal: Action[] | null = null;
+  let guestRaise: { min: number; max: number } | null = null;
+  let remoteResolver: ((msg: Extract<GameMsg, { type: "action" }>) => void) | null = null;
+  let hostAdvancing = false;
+
   function paint() {
     if (screen === "lobby") {
       tableBuilt = false;
@@ -68,6 +105,15 @@ export function boot(root: HTMLElement) {
     } else if (screen === "shop") {
       tableBuilt = false;
       renderShop();
+    } else if (screen === "onlineSetup") {
+      tableBuilt = false;
+      renderOnlineSetup();
+    } else if (screen === "onlineLobby") {
+      tableBuilt = false;
+      renderOnlineLobby();
+    } else if (screen === "onlineRoom") {
+      tableBuilt = false;
+      renderOnlineRoom();
     } else if (screen === "table") {
       renderTable();
     } else {
@@ -81,6 +127,26 @@ export function boot(root: HTMLElement) {
     paint();
   }
 
+  function stopLobby() {
+    lobbyH?.stop();
+    lobbyH = null;
+  }
+
+  async function leaveRoom() {
+    remoteResolver = null;
+    try {
+      await roomH?.leave();
+    } catch {
+      /* ignore */
+    }
+    roomH = null;
+    roomMembers = [];
+    currentTableNo = 0;
+    onlineMatch = false;
+    guestLegal = null;
+    guestRaise = null;
+  }
+
   function renderLobby() {
     const checkinReady = canCheckinToday(save);
     root.innerHTML = `
@@ -92,14 +158,14 @@ export function boot(root: HTMLElement) {
           ${checkinReady ? `每日签到 +${DAILY_CHECKIN_REWARD}` : "今日已签到"}
         </button>
         <button class="btn" type="button" data-play ${save.coins < ENTRY_FEE ? "disabled" : ""}>
-          进入牌桌（-${ENTRY_FEE}）
+          单机牌桌（-${ENTRY_FEE}）
         </button>
+        <button class="btn online" type="button" data-online>朋友联机大厅</button>
         <button class="btn secondary" type="button" data-shop>皮肤商城</button>
         <p class="hint">冠军 ${PRIZE[1]} · 第4名 ${PRIZE[4]}（净+${PRIZE[4] - ENTRY_FEE}）</p>
       </div>`;
     root.querySelector("[data-checkin]")?.addEventListener("click", () => {
-      const got = claimDailyCheckin(save);
-      if (got == null) return;
+      if (claimDailyCheckin(save) == null) return;
       save = loadSave();
       paint();
     });
@@ -108,19 +174,290 @@ export function boot(root: HTMLElement) {
       unlockAudio();
       save.coins -= ENTRY_FEE;
       writeSave(save);
+      onlineMatch = false;
       t = createTournament();
       startHand(t);
-      prevBets = Array(8).fill(0);
-      prevBoardLen = 0;
-      prevPot = 0;
-      tableBuilt = false;
-      prizePaid = false;
-      raiseOpen = false;
-      autoSettleScheduled = false;
+      resetTableRuntime();
       go("table");
       schedule();
     });
+    root.querySelector("[data-online]")?.addEventListener("click", () => {
+      unlockAudio();
+      if (!isNetConfigured()) {
+        go("onlineSetup");
+        return;
+      }
+      void enterOnlineLobby();
+    });
     root.querySelector("[data-shop]")?.addEventListener("click", () => go("shop"));
+  }
+
+  function renderOnlineSetup() {
+    const cfg = loadNetConfig();
+    root.innerHTML = `
+      <div class="lobby online-setup">
+        <h1>联机设置</h1>
+        <p class="hint">建一个免费 Supabase 项目（区选新加坡），把 URL 与 anon key 填在下面。朋友共用同一套即可。</p>
+        <label class="field">昵称<input data-nick value="${escapeAttr(getNickname())}" maxlength="12" /></label>
+        <label class="field">Supabase URL<input data-url value="${escapeAttr(cfg?.url ?? "")}" placeholder="https://xxx.supabase.co" /></label>
+        <label class="field">Anon Key<textarea data-key rows="3" placeholder="eyJhbGciOi...">${escapeAttr(cfg?.anonKey ?? "")}</textarea></label>
+        <button class="btn" type="button" data-save>保存并进入大厅</button>
+        <button class="btn secondary" type="button" data-back>返回</button>
+      </div>`;
+    root.querySelector("[data-back]")?.addEventListener("click", () => go("lobby"));
+    root.querySelector("[data-save]")?.addEventListener("click", () => {
+      const nick = (root.querySelector("[data-nick]") as HTMLInputElement).value;
+      const url = (root.querySelector("[data-url]") as HTMLInputElement).value.trim();
+      const anonKey = (root.querySelector("[data-key]") as HTMLTextAreaElement).value.trim();
+      setNickname(nick);
+      if (!url || !anonKey) {
+        alert("请填写 URL 与 Anon Key");
+        return;
+      }
+      saveNetConfig({ url, anonKey });
+      resetSupabase();
+      void enterOnlineLobby();
+    });
+  }
+
+  async function enterOnlineLobby() {
+    stopLobby();
+    await leaveRoom();
+    try {
+      lobbyH = joinLobby((counts) => {
+        tableCounts = counts;
+        if (screen === "onlineLobby") paint();
+      });
+      go("onlineLobby");
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "无法连接联机服务");
+      go("onlineSetup");
+    }
+  }
+
+  function renderOnlineLobby() {
+    const cells = tableCounts
+      .map((n, i) => {
+        const no = i + 1;
+        const full = n >= 8;
+        return `<button type="button" class="table-cell ${n > 0 ? "hot" : ""} ${full ? "full" : ""}" data-join="${no}" ${full ? "disabled" : ""}>
+          <span class="tn">桌 ${no}</span>
+          <span class="tc">${n}/8</span>
+        </button>`;
+      })
+      .join("");
+    root.innerHTML = `
+      <div class="online-lobby">
+        <div class="hud">
+          <button class="btn secondary" type="button" data-back>返回</button>
+          <span>${escapeHtml(getNickname())} · 金币 <strong>${save.coins}</strong></span>
+          <button class="btn secondary" type="button" data-cfg>设置</button>
+        </div>
+        <p class="ol-hint">选桌入座 · 全员准备后开赛（-${ENTRY_FEE}/人）· 空位补 AI</p>
+        <div class="table-grid">${cells}</div>
+      </div>`;
+    root.querySelector("[data-back]")?.addEventListener("click", () => {
+      stopLobby();
+      go("lobby");
+    });
+    root.querySelector("[data-cfg]")?.addEventListener("click", () => {
+      stopLobby();
+      go("onlineSetup");
+    });
+    root.querySelectorAll("[data-join]").forEach((el) => {
+      el.addEventListener("click", () => {
+        const no = Number((el as HTMLElement).dataset.join);
+        void enterTable(no);
+      });
+    });
+  }
+
+  async function enterTable(tableNo: number) {
+    if (save.coins < ENTRY_FEE) {
+      alert(`金币不足（需要 ${ENTRY_FEE}）`);
+      return;
+    }
+    try {
+      await leaveRoom();
+      currentTableNo = tableNo;
+      await lobbyH?.setTable(tableNo);
+      roomH = await joinTable(tableNo, {
+        onMembers: (m) => {
+          roomMembers = m;
+          if (screen === "onlineRoom") paint();
+          if (onlineMatch && roomH?.amHost()) maybeHostStart();
+        },
+        onMessage: (msg) => void onGameMsg(msg),
+      });
+      roomMembers = roomH.getMembers();
+      go("onlineRoom");
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "入桌失败");
+      await lobbyH?.setTable(null);
+    }
+  }
+
+  function renderOnlineRoom() {
+    const me = getPlayerId();
+    const my = roomMembers.find((m) => m.playerId === me);
+    const host = roomMembers.find((m) => m.isHost);
+    const readyAll = allHumansReady(roomMembers);
+    const seats = Array.from({ length: 8 }, (_, i) => {
+      const m = roomMembers.find((x) => x.seat === i);
+      if (!m) return `<div class="or-seat empty">空 · AI</div>`;
+      return `<div class="or-seat ${m.playerId === me ? "me" : ""} ${m.ready ? "ready" : ""}">
+        <div>${escapeHtml(m.name)}${m.isHost ? " ·房主" : ""}</div>
+        <div class="or-st">${m.ready ? "已准备" : "未准备"}</div>
+      </div>`;
+    }).join("");
+    root.innerHTML = `
+      <div class="online-room">
+        <div class="hud">
+          <button class="btn secondary" type="button" data-leave>离桌</button>
+          <span>桌 ${currentTableNo} · ${roomMembers.length}/8</span>
+        </div>
+        <p class="hint">房主：${escapeHtml(host?.name ?? "-")} · 真人全准备后自动开赛，空位补 AI</p>
+        <div class="or-grid">${seats}</div>
+        <button class="btn ${my?.ready ? "secondary" : "checkin"}" type="button" data-ready>
+          ${my?.ready ? "取消准备" : "准备"}
+        </button>
+        <p class="hint">${readyAll ? "全员已准备，房主正在开局…" : `还需准备：${roomMembers.filter((m) => !m.ready).map((m) => m.name).join("、") || "—"}`}</p>
+      </div>`;
+    root.querySelector("[data-leave]")?.addEventListener("click", () => {
+      void (async () => {
+        await leaveRoom();
+        await lobbyH?.setTable(null);
+        go("onlineLobby");
+      })();
+    });
+    root.querySelector("[data-ready]")?.addEventListener("click", () => {
+      if (!my || !roomH) return;
+      if (!my.ready && save.coins < ENTRY_FEE) {
+        alert(`金币不足（需要 ${ENTRY_FEE}）`);
+        return;
+      }
+      void roomH.setReady(!my.ready).then(() => {
+        roomMembers = roomH!.getMembers();
+        paint();
+        if (roomH!.amHost()) maybeHostStart();
+      });
+    });
+    if (roomH?.amHost()) maybeHostStart();
+  }
+
+  let starting = false;
+  function maybeHostStart() {
+    if (!roomH?.amHost() || onlineMatch || starting) return;
+    if (!allHumansReady(roomMembers)) return;
+    starting = true;
+    void (async () => {
+      try {
+        const humans = roomMembers
+          .slice()
+          .sort((a, b) => a.seat - b.seat)
+          .map((m) => ({ seat: m.seat, name: m.name, playerId: m.playerId }));
+        await roomH!.send({ type: "match_start", seats: humans, fee: ENTRY_FEE });
+        beginOnlineMatch(humans, true);
+      } catch (e) {
+        alert(e instanceof Error ? e.message : "开局失败");
+      } finally {
+        starting = false;
+      }
+    })();
+  }
+
+  function beginOnlineMatch(
+    humans: { seat: number; name: string; playerId: string }[],
+    asHost: boolean,
+  ) {
+    if (save.coins < ENTRY_FEE) {
+      alert("金币不足");
+      return;
+    }
+    save.coins -= ENTRY_FEE;
+    writeSave(save);
+    const mySeat = roomH?.getMySeat() ?? humans.find((h) => h.playerId === getPlayerId())?.seat ?? 0;
+    onlineMatch = true;
+    t = createTournament({ humans, localSeat: mySeat });
+    resetTableRuntime();
+    go("table");
+    if (asHost) {
+      startHand(t);
+      void hostPushState();
+      schedule();
+    }
+  }
+
+  async function onGameMsg(msg: GameMsg) {
+    if (msg.type === "match_start") {
+      // 房主已在本地开局；避免广播回环重复开局
+      if (onlineMatch || roomH?.amHost()) return;
+      beginOnlineMatch(msg.seats, false);
+      return;
+    }
+    if (msg.type === "action") {
+      if (roomH?.amHost() && remoteResolver) {
+        remoteResolver(msg);
+        remoteResolver = null;
+      }
+      return;
+    }
+    if (msg.type === "state") {
+      if (roomH?.amHost()) return;
+      const mySeat = roomH?.getMySeat();
+      if (mySeat != null && msg.forSeat !== mySeat) return;
+      if (!t) return;
+      applyPublicState(t, msg.state);
+      guestLegal = msg.state.myLegal ?? null;
+      guestRaise =
+        msg.state.raiseMin != null && msg.state.raiseMax != null
+          ? { min: msg.state.raiseMin, max: msg.state.raiseMax }
+          : null;
+      if (t.over) {
+        settlePrize();
+        go("result");
+        return;
+      }
+      busy = false;
+      updateTable(false);
+      return;
+    }
+    if (msg.type === "match_over") {
+      if (!t) return;
+      for (const [sid, place] of Object.entries(msg.places)) {
+        t.seats[Number(sid)].place = place;
+      }
+      t.ranking = msg.ranking;
+      t.over = true;
+      t.engine = null;
+      settlePrize();
+      go("result");
+    }
+  }
+
+  async function hostPushState() {
+    if (!roomH || !t || !roomH.amHost()) return;
+    for (const s of t.seats.filter((x) => x.isHuman)) {
+      await roomH.send({
+        type: "state",
+        state: serializePublic(t, s.id),
+        forSeat: s.id,
+      });
+    }
+  }
+
+  function resetTableRuntime() {
+    prevBets = Array(8).fill(0);
+    prevBoardLen = 0;
+    prevPot = 0;
+    tableBuilt = false;
+    prizePaid = false;
+    raiseOpen = false;
+    autoSettleScheduled = false;
+    lastMsg = "";
+    hostAdvancing = false;
+    guestLegal = null;
+    guestRaise = null;
   }
 
   function renderShop() {
@@ -185,7 +522,6 @@ export function boot(root: HTMLElement) {
     if (tableBuilt && root.querySelector(".table-screen")) return;
     const theme = save.equip.table;
     const dealer = save.equip.dealer;
-    // catalog id: dealer_queen → CSS 修饰类 dealer-queen（勿拼成 dealer-dealer_queen）
     const dealerMod = dealer.replace(/^dealer_/, "dealer-");
     const seats = Array.from({ length: 8 }, (_, i) => {
       const pos = SEAT_POS[i];
@@ -316,7 +652,11 @@ export function boot(root: HTMLElement) {
 
   function openRaiseSheet() {
     if (!t?.engine) return;
-    const { min, max } = raiseBounds(t.engine);
+    const bounds =
+      onlineMatch && !roomH?.amHost() && guestRaise
+        ? guestRaise
+        : raiseBounds(t.engine);
+    const { min, max } = bounds;
     const sheet = root.querySelector("[data-raise-sheet]") as HTMLElement | null;
     const range = root.querySelector("[data-raise-range]") as HTMLInputElement | null;
     const input = root.querySelector("[data-raise-input]") as HTMLInputElement | null;
@@ -343,7 +683,11 @@ export function boot(root: HTMLElement) {
 
   function syncRaiseUI(raw: number) {
     if (!t?.engine) return;
-    const { min, max } = raiseBounds(t.engine);
+    const bounds =
+      onlineMatch && !roomH?.amHost() && guestRaise
+        ? guestRaise
+        : raiseBounds(t.engine);
+    const { min, max } = bounds;
     const v = Math.max(min, Math.min(max, Math.floor(raw) || min));
     const range = root.querySelector("[data-raise-range]") as HTMLInputElement | null;
     const input = root.querySelector("[data-raise-input]") as HTMLInputElement | null;
@@ -356,7 +700,11 @@ export function boot(root: HTMLElement) {
   function confirmRaise() {
     if (!t?.engine || busy) return;
     const input = root.querySelector("[data-raise-input]") as HTMLInputElement | null;
-    const { min, max } = raiseBounds(t.engine);
+    const bounds =
+      onlineMatch && !roomH?.amHost() && guestRaise
+        ? guestRaise
+        : raiseBounds(t.engine);
+    const { min, max } = bounds;
     const raiseTo = Math.max(min, Math.min(max, Math.floor(Number(input?.value) || min)));
     hideRaiseSheet();
     void playHuman("raise", raiseTo);
@@ -364,11 +712,26 @@ export function boot(root: HTMLElement) {
 
   async function playHuman(act: Action, raiseTo?: number) {
     if (!t?.engine || busy) return;
+    // 嘉宾：只上报动作
+    if (onlineMatch && roomH && !roomH.amHost()) {
+      busy = true;
+      const seat = roomH.getMySeat() ?? t.localSeat;
+      await roomH.send({
+        type: "action",
+        seat,
+        action: act,
+        amount: raiseTo,
+        from: getPlayerId(),
+      });
+      updateTable(false);
+      return;
+    }
     busy = true;
     const before = t.engine.players.map((p) => p.bet);
     const info = humanAct(t, act, raiseTo);
     updateTable(false, before);
     if (info) await narrate(info);
+    if (onlineMatch) await hostPushState();
     schedule();
   }
 
@@ -389,9 +752,18 @@ export function boot(root: HTMLElement) {
 
   function finishOrNextHand() {
     if (!t) return;
-    afterHand(t);
-    if (t.over || isHumanBusted(t)) {
+    // 联机非房主不能推进
+    if (onlineMatch && roomH && !roomH.amHost()) return;
+    afterHand(t, { endIfLocalBusted: !onlineMatch });
+    if (t.over || (!onlineMatch && isHumanBusted(t))) {
       settlePrize();
+      if (onlineMatch && roomH?.amHost()) {
+        void roomH.send({
+          type: "match_over",
+          ranking: t.ranking,
+          places: Object.fromEntries(t.seats.map((s) => [s.id, s.place ?? 8])),
+        });
+      }
       go("result");
       return;
     }
@@ -401,6 +773,7 @@ export function boot(root: HTMLElement) {
     prevPot = 0;
     raiseOpen = false;
     updateTable(true);
+    if (onlineMatch) void hostPushState();
     schedule();
   }
 
@@ -443,6 +816,7 @@ export function boot(root: HTMLElement) {
     ensureTableShell();
     const e = t.engine;
     const [sb, bb] = blindsForHand(Math.max(1, t.hand));
+    const local = t.localSeat;
 
     const handEl = root.querySelector("[data-hud-hand]");
     const blindEl = root.querySelector("[data-hud-blind]");
@@ -465,7 +839,6 @@ export function boot(root: HTMLElement) {
     const potNow = e?.pot ?? 0;
     if (potEl) potEl.textContent = String(potNow);
 
-    // 筹码飞入
     if (e && betsBefore) {
       e.players.forEach((p, i) => {
         const delta = p.bet - (betsBefore[i] ?? 0);
@@ -498,10 +871,11 @@ export function boot(root: HTMLElement) {
       const folded = !!(ep?.folded || s.place !== null);
       const out = s.place !== null || (ep?.out ?? (s.chips <= 0 && !e));
       const turn = !!(e && e.street !== "done" && e.toAct === i);
+      const isYou = i === local;
 
       node.className = [
         "seat",
-        s.isHuman ? "you" : "",
+        isYou ? "you" : "",
         folded ? "folded" : "",
         out ? "out" : "",
         turn ? "turn" : "",
@@ -510,16 +884,14 @@ export function boot(root: HTMLElement) {
         .join(" ");
 
       const av = node.querySelector(".seat-avatar");
-      if (av) av.textContent = s.isHuman ? "你" : String(i);
+      if (av) av.textContent = isYou ? "你" : String(i);
       const name = node.querySelector(".seat-name");
       if (name) name.textContent = s.name;
       const atShowdown = !!(e && (e.street === "done" || e.street === "showdown"));
       const ch = node.querySelector(".seat-chips");
       if (ch) ch.textContent = String(chips);
       const st = node.querySelector(".seat-status");
-      if (st) {
-        st.textContent = out ? `第${s.place ?? "?"}名` : "";
-      }
+      if (st) st.textContent = out ? `第${s.place ?? "?"}名` : "";
 
       const betChip = node.querySelector("[data-bet-chip]") as HTMLElement | null;
       if (betChip) {
@@ -533,12 +905,13 @@ export function boot(root: HTMLElement) {
 
       const cards = node.querySelector(".seat-cards");
       if (cards && ep && !out) {
-        // 摊牌只亮未弃牌者的牌；弃牌的不展示
-        const showFace =
-          s.isHuman || (atShowdown && !ep.folded);
+        const hidden = !!ep.hidden;
+        const showFace = (!hidden && (isYou || (atShowdown && !ep.folded))) || (ep.hole.length === 2 && !hidden && isYou);
         if (ep.folded && atShowdown) {
           cards.innerHTML = "";
-        } else if (showFace) {
+        } else if (hidden || (!isYou && !atShowdown && !ep.folded)) {
+          cards.innerHTML = cardEl("back") + cardEl("back");
+        } else if (showFace && ep.hole.length) {
           cards.innerHTML = ep.hole.map((c) => cardEl(c, resetCards)).join("");
         } else if (!ep.folded) {
           cards.innerHTML = cardEl("back") + cardEl("back");
@@ -555,12 +928,23 @@ export function boot(root: HTMLElement) {
 
     const actions = root.querySelector("[data-actions]");
     if (actions && !raiseOpen) {
-      const acts = e && isHumanTurn(t) ? legalActions(e) : [];
-      const toCall = e && e.players[0] ? Math.max(0, e.currentBet - e.players[0].bet) : 0;
+      const myTurn = isHumanTurn(t);
+      const acts =
+        myTurn
+          ? onlineMatch && !roomH?.amHost() && guestLegal
+            ? guestLegal
+            : legalActions(e!)
+          : [];
+      const toCall =
+        e && e.players[local]
+          ? Math.max(0, e.currentBet - e.players[local].bet)
+          : 0;
       if (t.over) {
         actions.innerHTML = `<button class="btn" type="button" data-result>查看结算</button>`;
       } else if (e?.street === "done") {
-        if (isHumanBusted(t)) {
+        if (onlineMatch && roomH && !roomH.amHost()) {
+          actions.innerHTML = `<button class="btn secondary" type="button" disabled>等待房主继续…</button>`;
+        } else if (isHumanBusted(t) && !onlineMatch) {
           actions.innerHTML = `<button class="btn" type="button" data-nexthand>你已淘汰 · 立即结算</button>`;
         } else {
           actions.innerHTML = `<button class="btn" type="button" data-nexthand>下一把</button>`;
@@ -575,16 +959,31 @@ export function boot(root: HTMLElement) {
       }
     }
 
-    // 一手结束且你已输光：自动结算离场（不必等其他人）
-    if (e?.street === "done" && isHumanBusted(t) && !t.over && !autoSettleScheduled) {
+    if (!onlineMatch && e?.street === "done" && isHumanBusted(t) && !t.over && !autoSettleScheduled) {
       autoSettleScheduled = true;
-      const line = root.querySelector("[data-dealer-line]");
-      if (line) line.textContent = "你已淘汰，正在结算…";
+      const lineEl = root.querySelector("[data-dealer-line]");
+      if (lineEl) lineEl.textContent = "你已淘汰，正在结算…";
       pokeDealer("talk");
       window.setTimeout(() => {
         if (!t || t.over) return;
         finishOrNextHand();
       }, 1000);
+    }
+
+    // 联机房主：一手结束自动下一把 / 结算
+    if (
+      onlineMatch &&
+      roomH?.amHost() &&
+      e?.street === "done" &&
+      !t.over &&
+      !hostAdvancing
+    ) {
+      hostAdvancing = true;
+      window.setTimeout(() => {
+        hostAdvancing = false;
+        if (!t || t.over) return;
+        finishOrNextHand();
+      }, 1400);
     }
   }
 
@@ -595,7 +994,7 @@ export function boot(root: HTMLElement) {
   function settlePrize() {
     if (!t || prizePaid) return;
     prizePaid = true;
-    const me = t.seats[0];
+    const me = t.seats[t.localSeat];
     const place = me.place ?? 8;
     const prize = PRIZE[place] ?? 0;
     save.coins += prize;
@@ -608,19 +1007,17 @@ export function boot(root: HTMLElement) {
       .map((id) => {
         const s = t!.seats[id];
         const prize = PRIZE[s.place ?? 8] ?? 0;
-        const you = s.isHuman ? "（你）" : "";
-        return `<tr class="${s.isHuman ? "you-row" : ""}">
+        const you = id === t!.localSeat ? "（你）" : "";
+        return `<tr class="${id === t!.localSeat ? "you-row" : ""}">
           <td>${s.place}</td><td>${s.name}${you}</td><td>${s.chips}</td><td>+${prize}</td>
         </tr>`;
       })
       .join("");
-    const myPlace = t.seats[0].place ?? 8;
-    const bustHint = myPlace > 1 ? `<p class="hint">你已出局，按淘汰名次结算</p>` : "";
+    const myPlace = t.seats[t.localSeat].place ?? 8;
     root.innerHTML = `
       <div class="result">
         <h1>本局结束</h1>
         <p>你获得第 <strong>${myPlace}</strong> 名 · 奖金 <strong>${PRIZE[myPlace]}</strong></p>
-        ${bustHint}
         <p class="coins">当前金币 <strong>${save.coins}</strong></p>
         <table class="rank-table">
           <thead><tr><th>名次</th><th>玩家</th><th>筹码</th><th>奖金</th></tr></thead>
@@ -629,8 +1026,23 @@ export function boot(root: HTMLElement) {
         <button class="btn" type="button" data-home>返回大厅</button>
       </div>`;
     root.querySelector("[data-home]")?.addEventListener("click", () => {
-      t = null;
-      go("lobby");
+      void (async () => {
+        t = null;
+        if (onlineMatch) {
+          await leaveRoom();
+          await lobbyH?.setTable(null);
+          onlineMatch = false;
+          go(lobbyH ? "onlineLobby" : "lobby");
+        } else {
+          go("lobby");
+        }
+      })();
+    });
+  }
+
+  function waitRemoteAction(): Promise<Extract<GameMsg, { type: "action" }>> {
+    return new Promise((resolve) => {
+      remoteResolver = resolve;
     });
   }
 
@@ -640,6 +1052,12 @@ export function boot(root: HTMLElement) {
       timer = null;
     }
     if (!t || !t.engine || t.over || raiseOpen) return;
+    // 嘉宾不驱动 AI
+    if (onlineMatch && roomH && !roomH.amHost()) {
+      busy = false;
+      updateTable(false);
+      return;
+    }
     if (t.engine.street === "done") {
       updateTable(false);
       busy = false;
@@ -648,6 +1066,27 @@ export function boot(root: HTMLElement) {
     if (isHumanTurn(t)) {
       busy = false;
       updateTable(false);
+      if (onlineMatch) void hostPushState();
+      return;
+    }
+    if (onlineMatch && isRemoteHumanTurn(t)) {
+      busy = true;
+      updateTable(false);
+      void hostPushState();
+      void (async () => {
+        const needSeat = t!.engine!.toAct;
+        const msg = await waitRemoteAction();
+        if (!t?.engine || msg.seat !== needSeat) {
+          schedule();
+          return;
+        }
+        const before = t.engine.players.map((p) => p.bet);
+        const info = humanAct(t, msg.action, msg.amount);
+        updateTable(false, before);
+        if (info) await narrate(info);
+        await hostPushState();
+        schedule();
+      })();
       return;
     }
     busy = true;
@@ -658,13 +1097,25 @@ export function boot(root: HTMLElement) {
         const before = t.engine.players.map((p) => p.bet);
         const info = botAct(t);
         updateTable(false, before);
-        // 先等筹码动画一点，再播荷官语音；说完才轮下一位
         await new Promise((r) => setTimeout(r, CHIP_FLY_MS * 0.45));
         if (info) await narrate(info);
+        if (onlineMatch) await hostPushState();
         schedule();
       })();
     }, delay);
   }
 
   paint();
+}
+
+function escapeHtml(s: string) {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+function escapeAttr(s: string) {
+  return escapeHtml(s);
 }
