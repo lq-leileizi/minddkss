@@ -1,0 +1,8 @@
+{
+  "appId": "com.minddkss.poker",
+  "appName": "德州扑克",
+  "webDir": "dist",
+  "server": {
+    "androidScheme": "https"
+  }
+}

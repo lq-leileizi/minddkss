@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">德州扑克</string>
+    <string name="title_activity_main">德州扑克</string>
+    <string name="package_name">com.minddkss.poker</string>
+    <string name="custom_url_scheme">com.minddkss.poker</string>
+</resources>
