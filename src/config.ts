@@ -29,6 +29,9 @@ export function blindsForHand(handIndex1: number): [number, number] {
 
 export const ENTRY_FEE = 100;
 
+/** 联机大厅桌子数量 */
+export const TABLE_COUNT = 50;
+
 /** 名次 1..8 → 奖金（第4净赚 +20） */
 export const PRIZE = [0, 350, 220, 150, 120, 55, 35, 20, 10] as const;
 

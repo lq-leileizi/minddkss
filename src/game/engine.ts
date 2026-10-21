@@ -14,6 +14,8 @@ export type Player = {
   folded: boolean;
   allIn: boolean;
   out: boolean; // 整场淘汰
+  /** 联机嘉宾视角：底牌未知，UI 画牌背 */
+  hidden?: boolean;
 };
 
 export type Action = "fold" | "check" | "call" | "raise" | "allin";

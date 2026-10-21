@@ -9,7 +9,7 @@ import {
 } from "./engine";
 import { decide } from "../bot/decide";
 
-const NAMES = ["你", "阿强", "Lisa", "老周", "Mia", "阿杰", "Nina", "大飞"];
+const AI_NAMES = ["阿强", "Lisa", "老周", "Mia", "阿杰", "Nina", "大飞", "小北"];
 
 export type SeatState = {
   id: number;
@@ -18,6 +18,7 @@ export type SeatState = {
   chips: number;
   place: number | null; // 已定名次 1..8
   persona?: Persona;
+  playerId?: string;
 };
 
 export type Tournament = {
@@ -29,16 +30,40 @@ export type Tournament = {
   personas: Persona[];
   over: boolean;
   ranking: number[]; // seatId by place index 0 = 冠军
+  /** 单机：你在 0 号位；联机：本机座位 */
+  localSeat: number;
 };
 
-export function createTournament(): Tournament {
-  const seats: SeatState[] = Array.from({ length: PLAYERS }, (_, id) => ({
-    id,
-    name: NAMES[id],
-    isHuman: id === 0,
-    chips: START_CHIPS,
-    place: null,
-  }));
+export type CreateTournamentOpts = {
+  /** 真人座位；缺省则仅 0 号为「你」 */
+  humans?: { seat: number; name: string; playerId?: string }[];
+  localSeat?: number;
+};
+
+export function createTournament(opts: CreateTournamentOpts = {}): Tournament {
+  const humans = opts.humans ?? [{ seat: 0, name: "你" }];
+  const humanBySeat = new Map(humans.map((h) => [h.seat, h]));
+  let aiNameIdx = 0;
+  const seats: SeatState[] = Array.from({ length: PLAYERS }, (_, id) => {
+    const h = humanBySeat.get(id);
+    if (h) {
+      return {
+        id,
+        name: h.name,
+        isHuman: true,
+        chips: START_CHIPS,
+        place: null,
+        playerId: h.playerId,
+      };
+    }
+    return {
+      id,
+      name: AI_NAMES[aiNameIdx++ % AI_NAMES.length],
+      isHuman: false,
+      chips: START_CHIPS,
+      place: null,
+    };
+  });
   return {
     hand: 0,
     button: 0,
@@ -48,6 +73,7 @@ export function createTournament(): Tournament {
     personas: [],
     over: false,
     ranking: [],
+    localSeat: opts.localSeat ?? humans[0]?.seat ?? 0,
   };
 }
 
@@ -64,7 +90,6 @@ export function startHand(t: Tournament): Engine | null {
   }
   t.hand += 1;
   const [sb, bb] = blindsForHand(t.hand);
-  // 按钮轮转到仍存活
   let b = t.button;
   for (let i = 0; i < PLAYERS; i++) {
     b = (t.button + 1 + i) % PLAYERS;
@@ -103,7 +128,6 @@ export function syncChipsFromEngine(t: Tournament) {
     if (s.place !== null) continue;
     s.chips = p.chips;
   }
-  // 一手结束才判定淘汰（避免全下中途 chips=0 被误判）
   if (t.engine.street !== "done") return;
   for (const s of t.seats) {
     if (s.place !== null) continue;
@@ -113,17 +137,21 @@ export function syncChipsFromEngine(t: Tournament) {
   }
 }
 
-/** 玩家是否已出局（筹码打光） */
-export function isHumanBusted(t: Tournament): boolean {
-  return t.seats[0].chips <= 0 || t.finishOrder.includes(0);
+export function isSeatBusted(t: Tournament, seatId: number): boolean {
+  return t.seats[seatId].chips <= 0 || t.finishOrder.includes(seatId);
 }
 
-export function afterHand(t: Tournament) {
+/** 本机玩家是否已出局 */
+export function isHumanBusted(t: Tournament): boolean {
+  return isSeatBusted(t, t.localSeat);
+}
+
+export function afterHand(t: Tournament, opts?: { endIfLocalBusted?: boolean }) {
   syncChipsFromEngine(t);
   t.engine = null;
   const living = alive(t);
-  // 你输光就立刻整场结算离场，不必等其他人打完
-  if (isHumanBusted(t) || living.length <= 1 || t.hand >= MAX_HANDS) {
+  const localBust = opts?.endIfLocalBusted && isHumanBusted(t);
+  if (localBust || living.length <= 1 || t.hand >= MAX_HANDS) {
     endTournament(t);
   }
 }
@@ -132,18 +160,13 @@ export function endTournament(t: Tournament) {
   if (t.over) return;
   t.over = true;
   t.engine = null;
-  // 已出局：finishOrder 先出局 = 更差名次
   const placed = new Set<number>();
-  const rankingAsc: number[] = []; // 从第8到第1过程中先收集差的
-  // 先给归零的按出局顺序从差到好：第一个出局第8
   let place = PLAYERS;
   for (const id of t.finishOrder) {
     if (placed.has(id)) continue;
     t.seats[id].place = place--;
     placed.add(id);
-    rankingAsc.push(id);
   }
-  // 存活按筹码排序（多→少 = 更好名次）
   const survivors = t.seats
     .filter((s) => !placed.has(s.id))
     .sort((a, b) => b.chips - a.chips || a.id - b.id);
@@ -151,7 +174,6 @@ export function endTournament(t: Tournament) {
     s.place = place--;
     placed.add(s.id);
   }
-  // ranking: 冠军在前
   t.ranking = [...t.seats].sort((a, b) => (a.place ?? 99) - (b.place ?? 99)).map((s) => s.id);
 }
 
@@ -211,5 +233,13 @@ export function botAct(t: Tournament): ActInfo | null {
 
 export function isHumanTurn(t: Tournament): boolean {
   if (!t.engine || t.engine.street === "done") return false;
-  return !!t.engine.players[t.engine.toAct]?.isHuman && legalActions(t.engine).length > 0;
+  const p = t.engine.players[t.engine.toAct];
+  return !!p?.isHuman && p.id === t.localSeat && legalActions(t.engine).length > 0;
+}
+
+/** 当前是否轮到任意真人（房主等待远端动作） */
+export function isRemoteHumanTurn(t: Tournament): boolean {
+  if (!t.engine || t.engine.street === "done") return false;
+  const p = t.engine.players[t.engine.toAct];
+  return !!p?.isHuman && p.id !== t.localSeat && legalActions(t.engine).length > 0;
 }
