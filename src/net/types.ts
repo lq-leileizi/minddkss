@@ -36,6 +36,7 @@ export type PublicSeatView = {
 
 export type PublicState = {
   hand: number;
+  button: number;
   over: boolean;
   street: string;
   pot: number;

@@ -51,6 +51,7 @@ import {
   writeSave,
 } from "./store";
 import { SEAT_POS } from "./ui/seats";
+import { aimDealer, flyDealCard, resetDealerAim } from "./ui/dealerDeal";
 import {
   announceAction,
   announceResult,
@@ -97,6 +98,15 @@ export function boot(root: HTMLElement) {
   let guestRaise: { min: number; max: number } | null = null;
   let remoteResolver: ((msg: Extract<GameMsg, { type: "action" }>) => void) | null = null;
   let hostAdvancing = false;
+  /** 已播过发牌动画的把数；-1 表示还没发过 */
+  let animHand = -1;
+  let holesShown = Array(8).fill(2);
+  let boardShown = 5;
+  let holeJob = 0;
+  let boardJob = 0;
+  let dealingHoles = false;
+  let dealingBoard = false;
+  let boardWaiters: (() => void)[] = [];
 
   function paint() {
     if (screen === "lobby") {
@@ -458,6 +468,16 @@ export function boot(root: HTMLElement) {
     hostAdvancing = false;
     guestLegal = null;
     guestRaise = null;
+    animHand = -1;
+    holesShown = Array(8).fill(2);
+    boardShown = 5;
+    holeJob += 1;
+    boardJob += 1;
+    dealingHoles = false;
+    dealingBoard = false;
+    const pending = boardWaiters;
+    boardWaiters = [];
+    pending.forEach((fn) => fn());
   }
 
   function renderShop() {
@@ -466,7 +486,9 @@ export function boot(root: HTMLElement) {
         .map((s) => {
           const owned = save.owned.includes(s.id);
           const eq = save.equip[type] === s.id;
+          const art = type === "dealer" ? `<img class="shop-art" src="./dealers/${s.id}.jpg" alt="" />` : "";
           return `<div class="shop-item ${eq ? "equipped" : ""}">
+            ${art}
             <div class="shop-name">${s.name}</div>
             <div class="shop-price">${s.price === 0 ? "免费" : s.price + " 金币"}</div>
             <div class="shop-actions">
@@ -523,6 +545,7 @@ export function boot(root: HTMLElement) {
     const theme = save.equip.table;
     const dealer = save.equip.dealer;
     const dealerMod = dealer.replace(/^dealer_/, "dealer-");
+    const dealerArt = `./dealers/${dealer}.jpg`;
     const seats = Array.from({ length: 8 }, (_, i) => {
       const pos = SEAT_POS[i];
       return `<div class="seat" data-seat="${i}" style="left:${pos.x}%;top:${pos.y}%">
@@ -544,32 +567,7 @@ export function boot(root: HTMLElement) {
         </div>
         <div class="dealer-bar">
           <div class="dealer dealer-beauty ${dealerMod}" data-dealer>
-            <div class="dealer-figure">
-              <div class="dealer-hair-back"></div>
-              <div class="dealer-tail left"></div>
-              <div class="dealer-tail right"></div>
-              <div class="dealer-face">
-                <div class="dealer-brow left"></div>
-                <div class="dealer-brow right"></div>
-                <div class="dealer-eye left"><span class="shine"></span><i class="lid"></i></div>
-                <div class="dealer-eye right"><span class="shine"></span><i class="lid"></i></div>
-                <div class="dealer-blush left"></div>
-                <div class="dealer-blush right"></div>
-                <div class="dealer-nose"></div>
-                <div class="dealer-mouth"></div>
-              </div>
-              <div class="dealer-bang"></div>
-              <div class="dealer-ahoge"></div>
-              <div class="dealer-maid-band">
-                <span class="frill"></span>
-                <span class="flower"></span>
-              </div>
-              <div class="dealer-neck"></div>
-              <div class="dealer-collar"></div>
-              <div class="dealer-dress"></div>
-              <div class="dealer-apron"></div>
-              <div class="dealer-hand"></div>
-            </div>
+            <img class="dealer-portrait" src="${dealerArt}" alt="" />
             <div class="dealer-meta">
               <div class="dealer-name">${SKINS.find((x) => x.id === dealer)?.name ?? "荷官"}</div>
               <div class="dealer-line" data-dealer-line>主人，请入座～</div>
@@ -602,6 +600,7 @@ export function boot(root: HTMLElement) {
           </div>
         </div>
         <div class="actions" data-actions></div>
+        <div class="deal-layer" data-deal-fx></div>
       </div>`;
     tableBuilt = true;
     bindTableActions();
@@ -731,6 +730,7 @@ export function boot(root: HTMLElement) {
     const info = humanAct(t, act, raiseTo);
     updateTable(false, before);
     if (info) await narrate(info);
+    await waitBoard();
     if (onlineMatch) await hostPushState();
     schedule();
   }
@@ -811,9 +811,114 @@ export function boot(root: HTMLElement) {
     window.setTimeout(() => chip.remove(), CHIP_FLY_MS + 40);
   }
 
+  function pauseForDeal() {
+    return dealingHoles || dealingBoard;
+  }
+
+  function waitBoard(): Promise<void> {
+    if (!dealingBoard) return Promise.resolve();
+    return new Promise((resolve) => boardWaiters.push(resolve));
+  }
+
+  function queueDealAnimations() {
+    if (!t?.engine) return;
+    if (t.hand !== animHand) {
+      animHand = t.hand;
+      const fresh = t.engine.street === "preflop" && t.engine.board.length === 0;
+      if (fresh) {
+        holesShown = Array(8).fill(0);
+        boardShown = 0;
+        holeJob += 1;
+        dealingHoles = true;
+        const job = holeJob;
+        void runHoleDeal(job);
+      } else {
+        holesShown = Array(8).fill(2);
+        boardShown = t.engine.board.length;
+      }
+      return;
+    }
+    if (!dealingHoles && !dealingBoard && t.engine.board.length > boardShown) {
+      boardJob += 1;
+      dealingBoard = true;
+      const job = boardJob;
+      void runBoardDeal(job);
+    }
+  }
+
+  async function throwCardTo(target: Element | null) {
+    const portrait = root.querySelector(".dealer-portrait") as HTMLElement | null;
+    const layer = root.querySelector("[data-deal-fx]") as HTMLElement | null;
+    if (!portrait || !layer || !target) return;
+    aimDealer(portrait, target as HTMLElement);
+    await flyDealCard(layer, portrait, target as HTMLElement, `skin-${save.equip.card}`);
+  }
+
+  function releaseDealerAim() {
+    resetDealerAim(root.querySelector(".dealer-portrait"));
+  }
+
+  async function runHoleDeal(job: number) {
+    try {
+      if (!t?.engine) return;
+      const living: number[] = [];
+      for (let k = 1; k <= 8; k++) {
+        const id = (t.button + k) % 8;
+        const p = t.engine.players[id];
+        if (p && !p.out) living.push(id);
+      }
+      const order = [...living, ...living];
+      for (const seat of order) {
+        if (job !== holeJob || !t?.engine) return;
+        const target =
+          root.querySelector(`[data-seat="${seat}"] .seat-cards`) ??
+          root.querySelector(`[data-seat="${seat}"]`);
+        await throwCardTo(target);
+        holesShown[seat] = Math.min(2, (holesShown[seat] ?? 0) + 1);
+        updateTable(false);
+      }
+    } finally {
+      if (job === holeJob) {
+        dealingHoles = false;
+        holesShown = Array(8).fill(2);
+        releaseDealerAim();
+        if (screen === "table") {
+          updateTable(false);
+          schedule();
+        }
+      }
+    }
+  }
+
+  async function runBoardDeal(job: number) {
+    try {
+      while (t?.engine && boardShown < t.engine.board.length) {
+        if (job !== boardJob) return;
+        const index = boardShown;
+        updateTable(false);
+        const slot = root.querySelector(`[data-board-slot="${index}"]`);
+        await throwCardTo(slot);
+        if (job !== boardJob) return;
+        boardShown += 1;
+        updateTable(false);
+      }
+    } finally {
+      if (job === boardJob) {
+        dealingBoard = false;
+        releaseDealerAim();
+        if (t?.engine) boardShown = Math.max(boardShown, t.engine.board.length);
+        if (screen === "table") updateTable(false);
+        const waiters = boardWaiters;
+        boardWaiters = [];
+        waiters.forEach((fn) => fn());
+      }
+    }
+  }
+
   function updateTable(resetCards = false, betsBefore?: number[]) {
     if (!t) return;
     ensureTableShell();
+    queueDealAnimations();
     const e = t.engine;
     const [sb, bb] = blindsForHand(Math.max(1, t.hand));
     const local = t.localSeat;
@@ -854,12 +959,13 @@ export function boot(root: HTMLElement) {
     const board = e?.board ?? [];
     const boardWrap = root.querySelector("[data-board]");
     if (boardWrap) {
-      const grew = board.length > prevBoardLen;
-      if (grew) pokeDealer("deal");
       boardWrap.innerHTML = [0, 1, 2, 3, 4]
-        .map((i) => cardEl(board[i] ?? null, grew && i >= prevBoardLen, (i - prevBoardLen) * 80))
+        .map((i) => {
+          const card = i < boardShown ? (board[i] ?? null) : null;
+          return `<div class="board-slot" data-board-slot="${i}">${cardEl(card)}</div>`;
+        })
         .join("");
-      prevBoardLen = board.length;
+      prevBoardLen = boardShown;
     }
 
     t.seats.forEach((s, i) => {
@@ -904,17 +1010,18 @@ export function boot(root: HTMLElement) {
       }
 
       const cards = node.querySelector(".seat-cards");
-      if (cards && ep && !out) {
+      const nShow = holesShown[i] ?? 0;
+      if (cards && ep && !out && nShow > 0) {
         const hidden = !!ep.hidden;
-        const showFace = (!hidden && (isYou || (atShowdown && !ep.folded))) || (ep.hole.length === 2 && !hidden && isYou);
+        const showFace = !hidden && (isYou || (atShowdown && !ep.folded));
         if (ep.folded && atShowdown) {
           cards.innerHTML = "";
         } else if (hidden || (!isYou && !atShowdown && !ep.folded)) {
-          cards.innerHTML = cardEl("back") + cardEl("back");
+          cards.innerHTML = Array.from({ length: nShow }, () => cardEl("back")).join("");
         } else if (showFace && ep.hole.length) {
-          cards.innerHTML = ep.hole.map((c) => cardEl(c, resetCards)).join("");
+          cards.innerHTML = ep.hole.slice(0, nShow).map((c) => cardEl(c)).join("");
         } else if (!ep.folded) {
-          cards.innerHTML = cardEl("back") + cardEl("back");
+          cards.innerHTML = Array.from({ length: nShow }, () => cardEl("back")).join("");
         } else {
           cards.innerHTML = "";
         }
@@ -928,6 +1035,9 @@ export function boot(root: HTMLElement) {
 
     const actions = root.querySelector("[data-actions]");
     if (actions && !raiseOpen) {
+      if (dealingHoles || dealingBoard) {
+        actions.innerHTML = `<button class="btn secondary" type="button" disabled>发牌中…</button>`;
+      } else {
       const myTurn = isHumanTurn(t);
       const acts =
         myTurn
@@ -956,6 +1066,7 @@ export function boot(root: HTMLElement) {
           <button class="btn secondary" type="button" data-act="call" ${acts.includes("call") ? "" : "disabled"}>跟注${toCall > 0 ? " " + toCall : ""}</button>
           <button class="btn" type="button" data-act="raise" ${acts.includes("raise") ? "" : "disabled"}>加注</button>
           <button class="btn secondary" type="button" data-act="allin" ${acts.includes("allin") ? "" : "disabled"}>全下</button>`;
+      }
       }
     }
 
@@ -1051,7 +1162,7 @@ export function boot(root: HTMLElement) {
       clearTimeout(timer);
       timer = null;
     }
-    if (!t || !t.engine || t.over || raiseOpen) return;
+    if (!t || !t.engine || t.over || raiseOpen || pauseForDeal()) return;
     // 嘉宾不驱动 AI
     if (onlineMatch && roomH && !roomH.amHost()) {
       busy = false;
@@ -1060,18 +1171,21 @@ export function boot(root: HTMLElement) {
     }
     if (t.engine.street === "done") {
       updateTable(false);
+      if (pauseForDeal()) return;
       busy = false;
       return;
     }
     if (isHumanTurn(t)) {
       busy = false;
       updateTable(false);
+      if (pauseForDeal()) return;
       if (onlineMatch) void hostPushState();
       return;
     }
     if (onlineMatch && isRemoteHumanTurn(t)) {
       busy = true;
       updateTable(false);
+      if (pauseForDeal()) return;
       void hostPushState();
       void (async () => {
         const needSeat = t!.engine!.toAct;
@@ -1084,12 +1198,15 @@ export function boot(root: HTMLElement) {
         const info = humanAct(t, msg.action, msg.amount);
         updateTable(false, before);
         if (info) await narrate(info);
+        await waitBoard();
         await hostPushState();
         schedule();
       })();
       return;
     }
     busy = true;
+    updateTable(false);
+    if (pauseForDeal()) return;
     const delay = BOT_DELAY_MIN + Math.random() * (BOT_DELAY_MAX - BOT_DELAY_MIN);
     timer = window.setTimeout(() => {
       void (async () => {
@@ -1099,6 +1216,7 @@ export function boot(root: HTMLElement) {
         updateTable(false, before);
         await new Promise((r) => setTimeout(r, CHIP_FLY_MS * 0.45));
         if (info) await narrate(info);
+        await waitBoard();
         if (onlineMatch) await hostPushState();
         schedule();
       })();

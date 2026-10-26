@@ -40,6 +40,7 @@ export function serializePublic(t: Tournament, viewerSeat: number): PublicState 
 
   const state: PublicState = {
     hand: t.hand,
+    button: t.button,
     over: t.over,
     street: e?.street ?? "done",
     pot: e?.pot ?? 0,
@@ -66,6 +67,7 @@ export function serializePublic(t: Tournament, viewerSeat: number): PublicState 
  */
 export function applyPublicState(t: Tournament, state: PublicState) {
   t.hand = state.hand;
+  t.button = state.button ?? t.button;
   t.over = state.over;
   t.ranking = [...state.ranking];
   for (const s of state.seats) {
@@ -95,7 +97,7 @@ export function applyPublicState(t: Tournament, state: PublicState) {
     board: state.board.map((c) => ({ ...c })),
     pot: state.pot,
     street: state.street as Engine["street"],
-    button: 0,
+    button: state.button ?? 0,
     sb: 0,
     bb: 0,
     toAct: state.toAct,

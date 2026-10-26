@@ -218,6 +218,15 @@ html, body {
   background: rgba(0,0,0,0.35);
 }
 .shop-item.equipped { border-color: var(--gold); }
+.shop-art {
+  width: 100%;
+  height: 7.2rem;
+  object-fit: cover;
+  object-position: center 12%;
+  border-radius: 0.4rem;
+  margin-bottom: 0.45rem;
+  background: #12161c;
+}
 .shop-name { font-weight: 600; margin-bottom: 0.25rem; }
 .shop-price { font-size: 0.8rem; opacity: 0.75; margin-bottom: 0.5rem; }
 .shop-actions .btn { width: 100%; padding: 0.45rem; font-size: 0.85rem; }
@@ -252,9 +261,11 @@ html, body {
   justify-content: center;
   padding: 0.45rem 0.5rem 0.25rem;
   flex-shrink: 0;
+  position: relative;
+  z-index: 32;
 }
 
-/* 冰蓝女仆风（参考蕾姆配色与女仆造型，原创 CSS 立绘） */
+/* 动漫立绘荷官；配色条随皮肤变 */
 .dealer-beauty {
   --hair: #7ec8e8;
   --hair-deep: #4a9ec8;
@@ -300,348 +311,42 @@ html, body {
     linear-gradient(145deg, rgba(36, 24, 48, 0.95), rgba(14, 10, 22, 0.96));
 }
 
-.dealer-figure {
-  position: relative;
-  width: 5.2rem;
-  height: 5.8rem;
+.dealer-portrait {
+  width: 4.6rem;
+  height: 6.1rem;
+  object-fit: cover;
+  object-position: center 18%;
+  border-radius: 0.85rem;
   flex-shrink: 0;
+  background: #12161c;
   animation: dealer-breathe 3.4s ease-in-out infinite;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
+}
+.dealer.is-talk .dealer-portrait {
+  animation: dealer-talk 0.45s ease-in-out 3;
+}
+.dealer.is-deal .dealer-portrait {
+  animation: dealer-deal 0.55s ease-out;
+}
+.dealer-portrait.is-aim {
+  animation: none !important;
+  transition: transform 0.16s ease-out;
+  transform-origin: 50% 78%;
+}
+@keyframes dealer-talk {
+  0%, 100% { transform: translateY(0) scale(1); }
+  50% { transform: translateY(-2px) scale(1.03); }
+}
+@keyframes dealer-deal {
+  0% { transform: rotate(0deg); }
+  40% { transform: rotate(-6deg) translateY(-4px); }
+  100% { transform: rotate(0deg); }
 }
 @keyframes dealer-breathe {
   0%, 100% { transform: translateY(0) rotate(0deg); }
   50% { transform: translateY(-3px) rotate(-0.6deg); }
 }
 
-.dealer-hair-back {
-  position: absolute;
-  left: 50%;
-  top: 0.55rem;
-  width: 3.6rem;
-  height: 3.4rem;
-  transform: translateX(-50%);
-  background: linear-gradient(180deg, var(--hair) 0%, var(--hair-deep) 75%, color-mix(in srgb, var(--hair-deep) 70%, #000));
-  border-radius: 48% 48% 42% 42%;
-  z-index: 0;
-  box-shadow: inset 0 -8px 12px rgba(0, 0, 0, 0.15);
-}
-
-.dealer-tail {
-  position: absolute;
-  top: 1.5rem;
-  width: 1.15rem;
-  height: 3.2rem;
-  background: linear-gradient(180deg, var(--hair), var(--hair-deep));
-  border-radius: 40% 40% 50% 50%;
-  z-index: 0;
-  box-shadow: inset -2px 0 4px rgba(0, 0, 0, 0.12);
-  animation: tail-sway 2.8s ease-in-out infinite;
-}
-.dealer-tail.left {
-  left: 0.05rem;
-  transform: rotate(12deg);
-  transform-origin: top center;
-}
-.dealer-tail.right {
-  right: 0.05rem;
-  transform: rotate(-12deg);
-  transform-origin: top center;
-  animation-delay: 0.2s;
-}
-@keyframes tail-sway {
-  0%, 100% { filter: brightness(1); }
-  50% { filter: brightness(1.06); }
-}
-.dealer-tail.left { animation-name: tail-sway-l; }
-.dealer-tail.right { animation-name: tail-sway-r; }
-@keyframes tail-sway-l {
-  0%, 100% { transform: rotate(12deg); }
-  50% { transform: rotate(18deg); }
-}
-@keyframes tail-sway-r {
-  0%, 100% { transform: rotate(-12deg); }
-  50% { transform: rotate(-18deg); }
-}
-
-.dealer-face {
-  position: absolute;
-  left: 50%;
-  top: 0.95rem;
-  width: 2.7rem;
-  height: 3rem;
-  transform: translateX(-50%);
-  background: linear-gradient(180deg, #fff0e6 0%, #f8d0bc 55%, #efb8a0);
-  border-radius: 46% 46% 48% 48%;
-  z-index: 2;
-  box-shadow:
-    inset 0 -8px 12px rgba(200, 100, 90, 0.12),
-    0 2px 6px rgba(0, 0, 0, 0.12);
-}
-
-.dealer-brow {
-  position: absolute;
-  top: 0.78rem;
-  width: 0.58rem;
-  height: 0.09rem;
-  background: var(--hair-deep);
-  border-radius: 2px;
-  opacity: 0.85;
-}
-.dealer-brow.left { left: 0.48rem; transform: rotate(-10deg); }
-.dealer-brow.right { right: 0.48rem; transform: rotate(10deg); }
-
-.dealer-eye {
-  position: absolute;
-  top: 1.05rem;
-  width: 0.58rem;
-  height: 0.62rem;
-  background: linear-gradient(180deg, #fff 30%, #e8f6ff);
-  border-radius: 50% 50% 48% 48%;
-  overflow: hidden;
-  box-shadow: inset 0 0 0 1px rgba(80, 120, 160, 0.2);
-}
-.dealer-eye.left { left: 0.42rem; }
-.dealer-eye.right { right: 0.42rem; }
-.dealer-eye::after {
-  content: "";
-  position: absolute;
-  left: 50%;
-  top: 52%;
-  width: 0.34rem;
-  height: 0.36rem;
-  transform: translate(-50%, -50%);
-  background:
-    radial-gradient(circle at 35% 30%, #fff 0 18%, transparent 19%),
-    radial-gradient(circle at 50% 45%, var(--eye) 0 42%, var(--eye-deep) 70%, #102030 100%);
-  border-radius: 50%;
-}
-.dealer-eye .shine {
-  position: absolute;
-  right: 0.08rem;
-  top: 0.1rem;
-  width: 0.14rem;
-  height: 0.14rem;
-  background: #fff;
-  border-radius: 50%;
-  z-index: 1;
-  opacity: 0.95;
-}
-.dealer-eye .lid {
-  position: absolute;
-  inset: 0;
-  background: #f8d0bc;
-  transform-origin: top;
-  animation: blink 4.8s infinite;
-  z-index: 3;
-}
-.dealer-eye.right .lid { animation-delay: 0.1s; }
-@keyframes blink {
-  0%, 90%, 100% { transform: scaleY(0); }
-  92%, 95% { transform: scaleY(1); }
-}
-
-.dealer-blush {
-  position: absolute;
-  top: 1.55rem;
-  width: 0.5rem;
-  height: 0.3rem;
-  background: rgba(255, 130, 150, 0.4);
-  border-radius: 50%;
-  filter: blur(1.2px);
-}
-.dealer-blush.left { left: 0.22rem; }
-.dealer-blush.right { right: 0.22rem; }
-
-.dealer-nose {
-  position: absolute;
-  left: 50%;
-  top: 1.55rem;
-  width: 0.18rem;
-  height: 0.22rem;
-  transform: translateX(-50%);
-  background: rgba(220, 140, 120, 0.3);
-  border-radius: 40%;
-}
-
-.dealer-mouth {
-  position: absolute;
-  left: 50%;
-  top: 2.15rem;
-  width: 0.5rem;
-  height: 0.2rem;
-  transform: translateX(-50%);
-  background: #e87890;
-  border-radius: 0 0 0.45rem 0.45rem;
-  box-shadow: inset 0 1px 0 rgba(255, 200, 210, 0.4);
-}
-.dealer.is-talk .dealer-mouth {
-  animation: mouth-talk 0.4s ease-in-out 4;
-}
-@keyframes mouth-talk {
-  0%, 100% { height: 0.16rem; width: 0.45rem; }
-  50% { height: 0.3rem; width: 0.42rem; border-radius: 0.35rem; }
-}
-
-.dealer-bang {
-  position: absolute;
-  left: 50%;
-  top: 0.78rem;
-  width: 2.85rem;
-  height: 1.05rem;
-  transform: translateX(-50%);
-  background: linear-gradient(180deg, var(--hair) 0%, var(--hair-deep) 80%, transparent);
-  border-radius: 50% 50% 35% 35%;
-  z-index: 3;
-  pointer-events: none;
-  clip-path: ellipse(55% 70% at 50% 20%);
-}
-
-.dealer-ahoge {
-  position: absolute;
-  left: 52%;
-  top: 0.15rem;
-  width: 0.55rem;
-  height: 0.85rem;
-  background: var(--hair);
-  border-radius: 60% 40% 50% 50%;
-  transform: rotate(18deg);
-  z-index: 4;
-  transform-origin: bottom center;
-  animation: ahoge-bob 2.2s ease-in-out infinite;
-}
-@keyframes ahoge-bob {
-  0%, 100% { transform: rotate(18deg); }
-  50% { transform: rotate(28deg); }
-}
-
-.dealer-maid-band {
-  position: absolute;
-  left: 50%;
-  top: 0.35rem;
-  width: 3rem;
-  height: 0.7rem;
-  transform: translateX(-50%);
-  background: #f7f7f7;
-  border-radius: 0.2rem;
-  z-index: 5;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
-}
-.dealer-maid-band .frill {
-  position: absolute;
-  left: -0.15rem;
-  right: -0.15rem;
-  top: -0.22rem;
-  height: 0.35rem;
-  background:
-    radial-gradient(circle at 10% 100%, #fff 0.18rem, transparent 0.19rem),
-    radial-gradient(circle at 30% 100%, #fff 0.18rem, transparent 0.19rem),
-    radial-gradient(circle at 50% 100%, #fff 0.18rem, transparent 0.19rem),
-    radial-gradient(circle at 70% 100%, #fff 0.18rem, transparent 0.19rem),
-    radial-gradient(circle at 90% 100%, #fff 0.18rem, transparent 0.19rem);
-  background-color: transparent;
-}
-.dealer-maid-band .frill::before {
-  content: "";
-  position: absolute;
-  inset: 0.05rem 0.1rem auto;
-  height: 0.28rem;
-  background: #fff;
-  border-radius: 0.15rem 0.15rem 0 0;
-  border: 1px solid rgba(180, 200, 220, 0.5);
-  border-bottom: none;
-}
-.dealer-maid-band .flower {
-  position: absolute;
-  left: 0.15rem;
-  top: 50%;
-  width: 0.55rem;
-  height: 0.55rem;
-  transform: translateY(-50%);
-  background: radial-gradient(circle at 40% 40%, #fff 0 20%, var(--accent) 22% 55%, var(--hair-deep) 70%);
-  border-radius: 50%;
-  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.7);
-  z-index: 1;
-}
-
-.dealer-neck {
-  position: absolute;
-  left: 50%;
-  top: 3.7rem;
-  width: 0.72rem;
-  height: 0.45rem;
-  transform: translateX(-50%);
-  background: #f0c8b0;
-  z-index: 1;
-}
-.dealer-collar {
-  position: absolute;
-  left: 50%;
-  top: 3.95rem;
-  width: 1.6rem;
-  height: 0.35rem;
-  transform: translateX(-50%);
-  background: #fff;
-  border-radius: 0.1rem;
-  z-index: 3;
-  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.1);
-}
-.dealer-collar::after {
-  content: "";
-  position: absolute;
-  left: 50%;
-  top: 0.28rem;
-  width: 0.35rem;
-  height: 0.35rem;
-  transform: translateX(-50%);
-  background: var(--accent);
-  border-radius: 50%;
-  border: 2px solid #fff;
-}
-
-.dealer-dress {
-  position: absolute;
-  left: 50%;
-  top: 4.05rem;
-  width: 2.9rem;
-  height: 1.6rem;
-  transform: translateX(-50%);
-  background: linear-gradient(180deg, var(--dress) 0%, #0c1018 100%);
-  border-radius: 0.35rem 0.35rem 0.25rem 0.25rem;
-  z-index: 1;
-  border-top: 2px solid rgba(255, 255, 255, 0.15);
-}
-.dealer-apron {
-  position: absolute;
-  left: 50%;
-  top: 4.25rem;
-  width: 1.7rem;
-  height: 1.15rem;
-  transform: translateX(-50%);
-  background: linear-gradient(180deg, #fff, #e8eef4);
-  border-radius: 0.15rem 0.15rem 0.35rem 0.35rem;
-  z-index: 2;
-  box-shadow: inset 0 0 0 1px rgba(160, 180, 200, 0.35);
-}
-
-.dealer-hand {
-  position: absolute;
-  right: 0.15rem;
-  top: 4.15rem;
-  width: 0.72rem;
-  height: 0.95rem;
-  background: #f0c8b0;
-  border-radius: 0.35rem;
-  z-index: 4;
-  transform-origin: top center;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.15);
-}
-.dealer.is-deal .dealer-hand {
-  animation: deal-hand 0.65s ease-out;
-}
-@keyframes deal-hand {
-  0% { transform: rotate(0deg) translateY(0); }
-  35% { transform: rotate(-28deg) translateY(-8px); }
-  100% { transform: rotate(0deg) translateY(0); }
-}
 
 .dealer-meta { min-width: 0; flex: 1; }
 .dealer-name {
@@ -792,6 +497,22 @@ html, body {
   gap: 0.35rem;
   z-index: 2;
 }
+.board-slot { display: flex; }
+
+.deal-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 30;
+  pointer-events: none;
+  overflow: visible;
+}
+.fly-card {
+  position: absolute;
+  width: 1.7rem;
+  height: 2.4rem;
+  z-index: 31;
+  pointer-events: none;
+}
 
 .fx-layer {
   position: absolute;
@@ -930,7 +651,7 @@ html, body {
   justify-content: center;
   gap: 0.12rem;
   margin-top: 0.12rem;
-  min-height: 1.6rem;
+  min-height: 1.95rem;
 }
 .seat-cards .card { width: 1.4rem; height: 1.95rem; font-size: 0.5rem; }
 
