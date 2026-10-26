@@ -53,6 +53,14 @@ import {
 import { SEAT_POS } from "./ui/seats";
 import { aimDealer, flyDealCard, resetDealerAim } from "./ui/dealerDeal";
 import {
+  destroyLive2D,
+  live2DReady,
+  lookLive2DAt,
+  mountLive2D,
+  resetLive2DLook,
+  setLive2DTalking,
+} from "./ui/live2dDealer";
+import {
   announceAction,
   announceResult,
   announceStreet,
@@ -109,6 +117,7 @@ export function boot(root: HTMLElement) {
   let boardWaiters: (() => void)[] = [];
 
   function paint() {
+    if (screen !== "table") destroyLive2D();
     if (screen === "lobby") {
       tableBuilt = false;
       renderLobby();
@@ -567,7 +576,9 @@ export function boot(root: HTMLElement) {
         </div>
         <div class="dealer-bar">
           <div class="dealer dealer-beauty ${dealerMod}" data-dealer>
-            <img class="dealer-portrait" src="${dealerArt}" alt="" />
+            <div class="dealer-live2d" data-live2d>
+              <img class="dealer-portrait" src="${dealerArt}" alt="" />
+            </div>
             <div class="dealer-meta">
               <div class="dealer-name">${SKINS.find((x) => x.id === dealer)?.name ?? "荷官"}</div>
               <div class="dealer-line" data-dealer-line>主人，请入座～</div>
@@ -604,6 +615,14 @@ export function boot(root: HTMLElement) {
       </div>`;
     tableBuilt = true;
     bindTableActions();
+    const liveHost = root.querySelector("[data-live2d]") as HTMLElement | null;
+    if (liveHost) {
+      void mountLive2D(liveHost, dealer).then((ok) => {
+        if (!ok && liveHost.isConnected) {
+          liveHost.innerHTML = `<img class="dealer-portrait" src="${dealerArt}" alt="" />`;
+        }
+      });
+    }
   }
 
   function bindTableActions() {
@@ -736,17 +755,22 @@ export function boot(root: HTMLElement) {
   }
 
   async function narrate(info: ActInfo) {
+    setLive2DTalking(true);
     pokeDealer("talk");
-    await announceAction(info.name, info.action, info.amount);
-    if (info.streetAfter !== info.streetBefore) {
-      if (info.streetAfter === "flop" || info.streetAfter === "turn" || info.streetAfter === "river") {
-        pokeDealer("deal");
-        await announceStreet(info.streetAfter);
+    try {
+      await announceAction(info.name, info.action, info.amount);
+      if (info.streetAfter !== info.streetBefore) {
+        if (info.streetAfter === "flop" || info.streetAfter === "turn" || info.streetAfter === "river") {
+          pokeDealer("deal");
+          await announceStreet(info.streetAfter);
+        } else if (info.streetAfter === "done") {
+          await announceResult(info.message);
+        }
       } else if (info.streetAfter === "done") {
         await announceResult(info.message);
       }
-    } else if (info.streetAfter === "done") {
-      await announceResult(info.message);
+    } finally {
+      setLive2DTalking(false);
     }
   }
 
@@ -847,15 +871,19 @@ export function boot(root: HTMLElement) {
   }
 
   async function throwCardTo(target: Element | null) {
+    const live = root.querySelector("[data-live2d]") as HTMLElement | null;
     const portrait = root.querySelector(".dealer-portrait") as HTMLElement | null;
+    const from = live ?? portrait;
     const layer = root.querySelector("[data-deal-fx]") as HTMLElement | null;
-    if (!portrait || !layer || !target) return;
-    aimDealer(portrait, target as HTMLElement);
-    await flyDealCard(layer, portrait, target as HTMLElement, `skin-${save.equip.card}`);
+    if (!from || !layer || !target) return;
+    if (live2DReady()) lookLive2DAt(target as HTMLElement);
+    else if (portrait) aimDealer(portrait, target as HTMLElement);
+    await flyDealCard(layer, from, target as HTMLElement, `skin-${save.equip.card}`);
   }
 
   function releaseDealerAim() {
     resetDealerAim(root.querySelector(".dealer-portrait"));
+    resetLive2DLook();
   }
 
   async function runHoleDeal(job: number) {

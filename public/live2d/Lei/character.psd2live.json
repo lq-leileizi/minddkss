@@ -1,0 +1,28 @@
+{
+  "version": 1,
+  "model": "character",
+  "generator": "PSD2Live 3.6.7",
+  "runtimeTarget": "Cubism50",
+  "mocVersion": 5,
+  "cmo3TargetVersionNo": 5000000,
+  "cmo3FileFormatVersion": "500000005",
+  "canvas": {"width":768,"height":1024},
+  "config": {"atlasSize":2048,"meshSpacing":64,"headTurnStrength":1.0,"bodyStrength":1.0,"meshOnly":false,"generateDeformers":true,"exportMotions":true},
+  "faceRig": {"algorithm":"perspective-parallelogram-nine-pose-v2","angleX":[-45,0,45],"angleY":[-30,0,30],"initialAngleZ":-16.286976,"centerX":355.1355,"centerY":355.70847,"radiusX":247.23413,"radiusY":203.60051},
+  "deformerHierarchy": {"head":"DeformHeadContainer","face":"DeformFaceNinePose","frontHair":["DeformHairFrontFollow","DeformHairFrontPhysics"],"backHair":["DeformHairBackFollow","DeformHairBackPhysics"]},
+  "physics": {"enabled":true,"frontHair":true,"backHair":true,"eyeJelly":true,"groups":["PhysicsHairBack","PhysicsHairFront","PhysicsEyeJelly"]},
+  "summary": {"layers":10,"drawables":11,"deformers":19,"parameters":20,"atlasPages":1},
+  "layers": [
+    {"source":"后发","type":"preset","tag":"back hair","side":"NONE","parameter":"","switchId":0,"drawable":"ArtMeshBackHair"},
+  {"source":"身体","type":"preset","tag":"topwear","side":"NONE","parameter":"","switchId":0,"drawable":"ArtMeshTopwear"},
+  {"source":"脖子","type":"preset","tag":"neck","side":"NONE","parameter":"","switchId":0,"drawable":"ArtMeshNeck"},
+  {"source":"脸","type":"preset","tag":"face","side":"NONE","parameter":"","switchId":0,"drawable":"ArtMeshFace"},
+  {"source":"嘴巴 / 上唇描边","type":"preset","tag":"mouth","side":"NONE","parameter":"","switchId":0,"drawable":"ArtMeshMouth_lip_0"},
+  {"source":"嘴巴 / 下唇描边","type":"preset","tag":"mouth","side":"NONE","parameter":"","switchId":0,"drawable":"ArtMeshMouth_lip_1"},
+  {"source":"嘴巴","type":"preset","tag":"mouth","side":"NONE","parameter":"","switchId":0,"drawable":"ArtMeshMouth"},
+  {"source":"眼睛左","type":"preset","tag":"irides","side":"LEFT","parameter":"","switchId":0,"drawable":"ArtMeshIridesL"},
+  {"source":"眼睛右","type":"preset","tag":"irides","side":"RIGHT","parameter":"","switchId":0,"drawable":"ArtMeshIridesR"},
+  {"source":"前发","type":"preset","tag":"front hair","side":"NONE","parameter":"","switchId":0,"drawable":"ArtMeshFrontHair"}
+  ],
+  "warnings": ["检测到同名图层：眼睛；已通过稳定图层 ID 区分。"]
+}
