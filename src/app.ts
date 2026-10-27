@@ -553,7 +553,7 @@ export function boot(root: HTMLElement) {
     const theme = save.equip.table;
     const dealer = save.equip.dealer;
     const dealerMod = dealer.replace(/^dealer_/, "dealer-");
-    const dealerArt = `./dealers/${dealer}.jpg`;
+    const dealerArt = `./dealers/${dealer}${dealer === "dealer_default" ? ".jpg" : ".png"}`;
     const seats = Array.from({ length: 8 }, (_, i) => {
       const pos = SEAT_POS[i];
       return `<div class="seat" data-seat="${i}" style="left:${pos.x}%;top:${pos.y}%">
@@ -574,8 +574,8 @@ export function boot(root: HTMLElement) {
           <span data-hud-coins></span>
         </div>
         <div class="dealer-bar">
-          <div class="dealer dealer-beauty ${dealerMod}" data-dealer>
-            <div class="dealer-live2d" data-live2d>
+          <div class="dealer ${dealerMod}" data-dealer>
+            <div class="dealer-figure" data-live2d>
               <img class="dealer-portrait" src="${dealerArt}" alt="" />
             </div>
             <div class="dealer-meta">
