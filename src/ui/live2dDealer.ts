@@ -3,6 +3,7 @@ import { Live2DModel } from "pixi-live2d-display/cubism4";
 
 type MouthModel = {
   addParameterValueById(id: string, value: number, weight?: number): void;
+  setParameterValueById(id: string, value: number, weight?: number): void;
 };
 
 type TalkModel = {
@@ -18,8 +19,13 @@ type TalkModel = {
 
 let app: PIXI.Application | null = null;
 let model: Live2DModel | null = null;
+let hostEl: HTMLElement | null = null;
 let token = 0;
 let talking = false;
+/** 发牌时压过待机动作，让头和身体转到目标方向。 */
+let aimPose: { x: number; y: number; z: number; bodyX: number; bodyY: number; eyeX: number; eyeY: number; nx: number } | null = null;
+let restX = 0;
+let restScale = 1;
 
 Live2DModel.registerTicker(PIXI.Ticker);
 
@@ -63,6 +69,7 @@ export async function mountLive2D(host: HTMLElement, dealerId = "dealer_default"
   shimCubismCore();
   const my = ++token;
   destroyView();
+  hostEl = host;
   const canvas = document.createElement("canvas");
   canvas.className = "live2d-canvas";
   host.replaceChildren(canvas);
@@ -89,16 +96,29 @@ export async function mountLive2D(host: HTMLElement, dealerId = "dealer_default"
     const internal = loaded.internalModel as unknown as TalkModel;
     fitModelScale(internal);
     const modelHeight = loaded.height || internal.coreModel.getModel().canvasinfo.CanvasHeight || height;
-    const scale = height / modelHeight;
-    loaded.scale.set(scale);
-    loaded.anchor.set(0.5, 0);
-    loaded.x = width / 2;
-    loaded.y = 0;
+    restScale = height / modelHeight;
+    restX = width / 2;
+    loaded.scale.set(restScale);
+    loaded.anchor.set(0.5, 1);
+    loaded.x = restX;
+    loaded.y = height;
     pixi.stage.addChild(loaded);
+    placeModel();
     internal.on("beforeModelUpdate", () => {
+      const core = internal.coreModel;
+      if (aimPose) {
+        core.setParameterValueById("ParamAngleX", aimPose.x);
+        core.setParameterValueById("ParamAngleY", aimPose.y);
+        core.setParameterValueById("ParamAngleZ", aimPose.z);
+        core.setParameterValueById("ParamBodyAngleX", aimPose.bodyX);
+        core.setParameterValueById("ParamBodyAngleY", aimPose.bodyY);
+        core.setParameterValueById("ParamBodyAngleZ", aimPose.z * 0.65);
+        core.setParameterValueById("ParamEyeBallX", aimPose.eyeX);
+        core.setParameterValueById("ParamEyeBallY", aimPose.eyeY);
+      }
       if (!talking) return;
       const open = (Math.sin(performance.now() / 85) + 1) / 2;
-      internal.coreModel.addParameterValueById("ParamMouthOpenY", open, 1);
+      core.addParameterValueById("ParamMouthOpenY", open, 1);
     });
     void loaded.motion("Idle", 0);
     return true;
@@ -133,17 +153,48 @@ function fitModelScale(internal: TalkModel) {
 }
 
 export function lookLive2DAt(target: HTMLElement) {
-  if (!model) return;
+  if (!hostEl) return;
+  const origin = (hostEl.parentElement ?? hostEl).getBoundingClientRect();
   const r = target.getBoundingClientRect();
-  model.focus(r.left + r.width / 2, r.top + r.height / 2);
+  const dx = r.left + r.width / 2 - (origin.left + origin.width / 2);
+  const dy = r.top + r.height / 2 - (origin.top + origin.height / 2);
+  const nx = clamp(dx / 90, -1, 1);
+  const ny = clamp(dy / 240, -0.35, 1);
+  aimPose = {
+    x: nx * 22,
+    y: ny * 14,
+    z: nx * -10,
+    bodyX: nx * 16,
+    bodyY: ny * 8,
+    eyeX: nx,
+    eyeY: clamp(ny, -1, 1),
+    nx,
+  };
+  placeModel();
 }
 
 export function resetLive2DLook() {
+  aimPose = null;
+  placeModel();
   if (!model) return;
   const canvas = app?.view as HTMLCanvasElement | undefined;
   if (!canvas) return;
   const b = canvas.getBoundingClientRect();
   model.focus(b.left + b.width / 2, b.bottom + 40);
+}
+
+/** 整个人绕胸口转，并往出牌的一侧探过去。 */
+function placeModel() {
+  if (!model) return;
+  const nx = aimPose?.nx ?? 0;
+  model.scale.set(restScale);
+  model.angle = nx * -18;
+  model.x = restX + nx * 10;
+  model.y = hostEl?.clientHeight || app?.renderer.height || 0;
+}
+
+function clamp(n: number, min: number, max: number) {
+  return Math.max(min, Math.min(max, n));
 }
 
 export function setLive2DTalking(on: boolean) {
@@ -161,6 +212,8 @@ export function destroyLive2D() {
 }
 
 function destroyView() {
+  aimPose = null;
+  hostEl = null;
   model?.destroy();
   model = null;
   if (app) {

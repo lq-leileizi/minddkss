@@ -54,7 +54,6 @@ import { SEAT_POS } from "./ui/seats";
 import { aimDealer, flyDealCard, resetDealerAim } from "./ui/dealerDeal";
 import {
   destroyLive2D,
-  live2DReady,
   lookLive2DAt,
   mountLive2D,
   resetLive2DLook,
@@ -876,7 +875,7 @@ export function boot(root: HTMLElement) {
     const from = live ?? portrait;
     const layer = root.querySelector("[data-deal-fx]") as HTMLElement | null;
     if (!from || !layer || !target) return;
-    if (live2DReady()) lookLive2DAt(target as HTMLElement);
+    if (live) lookLive2DAt(target as HTMLElement);
     else if (portrait) aimDealer(portrait, target as HTMLElement);
     await flyDealCard(layer, from, target as HTMLElement, `skin-${save.equip.card}`);
   }

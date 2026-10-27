@@ -4,10 +4,11 @@ export function aimDealer(portrait: HTMLElement, target: HTMLElement) {
   const tr = target.getBoundingClientRect();
   const dx = tr.left + tr.width / 2 - (pr.left + pr.width / 2);
   const dy = tr.top + tr.height / 2 - (pr.top + pr.height / 2);
-  const yaw = Math.max(-46, Math.min(46, dx / 7));
-  const nod = Math.max(-6, Math.min(12, dy / 36));
+  const yaw = Math.max(-46, Math.min(46, dx / 5.5));
+  const nod = Math.max(-6, Math.min(14, dy / 28));
+  const slide = Math.max(-22, Math.min(22, dx / 9));
   portrait.classList.add("is-aim");
-  portrait.style.transform = `perspective(520px) rotateY(${(-yaw).toFixed(1)}deg) rotate(${(yaw * 0.08).toFixed(1)}deg) translateY(${nod.toFixed(1)}px)`;
+  portrait.style.transform = `perspective(520px) translateX(${slide.toFixed(1)}px) rotateY(${(-yaw).toFixed(1)}deg) rotate(${(yaw * 0.22).toFixed(1)}deg) translateY(${nod.toFixed(1)}px)`;
 }
 
 export function resetDealerAim(portrait: HTMLElement | null) {
@@ -47,7 +48,7 @@ export function flyDealCard(
         transform: "translate(-50%, -50%) rotate(8deg) scale(1)",
       },
     ],
-    { duration: 240, easing: "cubic-bezier(.22,.7,.2,1)", fill: "forwards" },
+    { duration: 380, easing: "cubic-bezier(.22,.7,.2,1)", fill: "forwards" },
   );
   return anim.finished.then(
     () => card.remove(),
