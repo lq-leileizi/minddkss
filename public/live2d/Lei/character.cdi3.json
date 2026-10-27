@@ -214,14 +214,6 @@
 		{
 			"Id": "ArtMeshTopwear",
 			"Name": "身体"
-		},
-		{
-			"Id": "ArtMeshBackHair",
-			"Name": "后发"
-		},
-		{
-			"Id": "ArtMeshFrontHair_SeeThrough",
-			"Name": "前发（透过刘海）"
 		}
 	]
 }
