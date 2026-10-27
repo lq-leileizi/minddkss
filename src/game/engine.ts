@@ -20,6 +20,21 @@ export type Player = {
 
 export type Action = "fold" | "check" | "call" | "raise" | "allin";
 
+/** 本手已经发生的行动，供 AI 看弃牌、跟注和加注尺度。 */
+export type HandAction = {
+  street: "preflop" | "flop" | "turn" | "river";
+  seat: number;
+  action: Action;
+  /** 这次实际投入的筹码 */
+  paid: number;
+  /** 行动后本街自己的下注额 */
+  betTo: number;
+  /** 行动前的底池 */
+  potBefore: number;
+  /** 这次把本街最高注抬上去了（加注或加注型全下） */
+  raised: boolean;
+};
+
 export type Engine = {
   players: Player[];
   deck: Card[];
@@ -34,6 +49,7 @@ export type Engine = {
   minRaise: number;
   lastAggressor: number;
   acted: Set<number>;
+  history: HandAction[];
   winners: { ids: number[]; amount: number; handName?: string }[];
   message: string;
 };
@@ -92,6 +108,7 @@ export function createEngine(
     minRaise: bb,
     lastAggressor: -1,
     acted: new Set(),
+    history: [],
     winners: [],
     message: "",
   };
@@ -163,6 +180,8 @@ export function applyAction(e: Engine, action: Action, raiseTo?: number): void {
   const p = e.players[e.toAct];
   if (!canAct(p)) return;
   const toCall = e.currentBet - p.bet;
+  const potBefore = e.pot;
+  const prevBet = e.currentBet;
 
   if (action === "fold") {
     p.folded = true;
@@ -195,6 +214,18 @@ export function applyAction(e: Engine, action: Action, raiseTo?: number): void {
       e.acted = new Set([p.id]);
     }
     e.message = `${p.name} 全下`;
+  }
+
+  if (e.street === "preflop" || e.street === "flop" || e.street === "turn" || e.street === "river") {
+    e.history.push({
+      street: e.street,
+      seat: p.id,
+      action,
+      paid: e.pot - potBefore,
+      betTo: p.bet,
+      potBefore,
+      raised: (action === "raise" || action === "allin") && p.bet > prevBet,
+    });
   }
 
   e.acted.add(p.id);

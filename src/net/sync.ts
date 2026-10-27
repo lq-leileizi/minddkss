@@ -105,6 +105,7 @@ export function applyPublicState(t: Tournament, state: PublicState) {
     minRaise: 0,
     lastAggressor: -1,
     acted: new Set(),
+    history: [],
     winners: [],
     message: state.message,
   };
