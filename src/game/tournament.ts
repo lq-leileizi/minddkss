@@ -81,6 +81,42 @@ function alive(t: Tournament) {
   return t.seats.filter((s) => s.chips > 0 && s.place === null);
 }
 
+/** 金币场开一局新牌：沿用各自剩下的筹码。AI 输光才补到买入额，真人筹码不动。 */
+export function beginCashHand(t: Tournament, sb: number, bb: number, aiRefill: number): Engine {
+  t.over = false;
+  t.finishOrder = [];
+  t.ranking = [];
+  t.engine = null;
+  for (const s of t.seats) {
+    s.place = null;
+    if (!s.isHuman && s.chips <= 0) s.chips = aiRefill;
+  }
+  t.hand += 1;
+  let b = t.button;
+  for (let i = 0; i < PLAYERS; i++) {
+    b = (t.button + 1 + i) % PLAYERS;
+    if (t.seats[b].chips > 0) break;
+  }
+  t.button = b;
+  const ai = t.seats.filter((s) => !s.isHuman).length;
+  t.personas = rollPersonas(ai);
+  let aiIdx = 0;
+  for (const s of t.seats) {
+    s.persona = s.isHuman ? undefined : t.personas[aiIdx++];
+  }
+  t.engine = createEngine(
+    t.seats.map((s) => ({
+      name: s.name,
+      isHuman: s.isHuman,
+      chips: s.chips,
+    })),
+    t.button,
+    sb,
+    bb,
+  );
+  return t.engine;
+}
+
 export function startHand(t: Tournament): Engine | null {
   if (t.over) return null;
   const living = alive(t);

@@ -102,11 +102,37 @@ html, body {
 }
 .btn.checkin:active { box-shadow: 0 1px 0 #1d6b52; }
 
+.btn.cash {
+  background: linear-gradient(180deg, #e0a06a, #b86a32);
+  color: #fff;
+  box-shadow: 0 4px 0 #6e3e1c, 0 8px 20px rgba(0, 0, 0, 0.35);
+}
 .btn.online {
   background: linear-gradient(180deg, #6aa8e0, #2f6fad);
   color: #fff;
   box-shadow: 0 4px 0 #1d456e, 0 8px 20px rgba(0, 0, 0, 0.35);
 }
+.stake-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+  width: min(100%, 18rem);
+}
+.stake {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  padding: 0.75rem 1rem;
+  border-radius: 0.75rem;
+  border: 1px solid rgba(212, 168, 75, 0.45);
+  background: rgba(0, 0, 0, 0.35);
+  color: var(--cream);
+  cursor: pointer;
+  text-align: left;
+}
+.stake:disabled { opacity: 0.4; cursor: not-allowed; }
+.stake-name { font-weight: 700; color: var(--gold); }
+.stake-blind, .stake-buy { font-size: 0.85rem; opacity: 0.85; }
 .btn.online:active { box-shadow: 0 1px 0 #1d456e; }
 
 .hint { font-size: 0.85rem; opacity: 0.65; }
@@ -706,7 +732,7 @@ html, body {
   background: rgba(0, 0, 0, 0.55);
   border-top: 1px solid rgba(255,255,255,0.06);
 }
-.actions .btn { padding: 0.62rem 0.95rem; font-size: 0.9rem; }
+.actions .btn { padding: 0.62rem 0.85rem; font-size: 0.88rem; }
 
 .rank-table {
   border-collapse: collapse;

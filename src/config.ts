@@ -29,6 +29,15 @@ export function blindsForHand(handIndex1: number): [number, number] {
 
 export const ENTRY_FEE = 100;
 
+/** 金币场：买入后打一小局，结束按剩余筹码结算，再准备就是新的一局 */
+export const CASH_TABLES = [
+  { id: "low", name: "初级场", sb: 10, bb: 20, buyin: 400 },
+  { id: "mid", name: "中级场", sb: 25, bb: 50, buyin: 1000 },
+  { id: "high", name: "高级场", sb: 100, bb: 200, buyin: 4000 },
+] as const;
+
+export type CashTableId = (typeof CASH_TABLES)[number]["id"];
+
 /** 联机大厅桌子数量 */
 export const TABLE_COUNT = 50;
 

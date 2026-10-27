@@ -1,8 +1,10 @@
 import {
   DAILY_CHECKIN_REWARD,
+  CASH_TABLES,
   ENTRY_FEE,
   MAX_HANDS,
   PRIZE,
+  type CashTableId,
   TABLE_COUNT,
   blindsForHand,
 } from "./config";
@@ -20,7 +22,9 @@ import {
   isHumanBusted,
   isHumanTurn,
   isRemoteHumanTurn,
+  beginCashHand,
   startHand,
+  syncChipsFromEngine,
   type ActInfo,
   type Tournament,
 } from "./game/tournament";
@@ -73,6 +77,7 @@ type Screen =
   | "onlineLobby"
   | "onlineRoom"
   | "table"
+  | "cash"
   | "result";
 
 const BOT_DELAY_MIN = 350;
@@ -115,6 +120,15 @@ export function boot(root: HTMLElement) {
   let dealingBoard = false;
   let boardWaiters: (() => void)[] = [];
 
+  /** 金币场。积分赛时 cashId 为空。 */
+  let cashId: CashTableId | null = null;
+  let cashBuyin = 0;
+  /** 桌上筹码已经兑回金币。 */
+  let cashPaid = true;
+  let cashNet: number | null = null;
+  let cashStackAtStart = 0;
+  let cashPhase: "ready" | "play" = "ready";
+
   function paint() {
     if (screen !== "table") destroyLive2D();
     if (screen === "lobby") {
@@ -132,6 +146,9 @@ export function boot(root: HTMLElement) {
     } else if (screen === "onlineRoom") {
       tableBuilt = false;
       renderOnlineRoom();
+    } else if (screen === "cash") {
+      tableBuilt = false;
+      renderCash();
     } else if (screen === "table") {
       renderTable();
     } else {
@@ -170,14 +187,15 @@ export function boot(root: HTMLElement) {
     root.innerHTML = `
       <div class="lobby">
         <h1>德州扑克</h1>
-        <p>8 人单桌淘汰 · 最多 ${MAX_HANDS} 把 · AI 每把换人设</p>
+        <p>积分赛淘汰，或进金币场打一小局就结算</p>
         <div class="coins">金币 <strong>${save.coins}</strong></div>
         <button class="btn checkin" type="button" data-checkin ${checkinReady ? "" : "disabled"}>
           ${checkinReady ? `每日签到 +${DAILY_CHECKIN_REWARD}` : "今日已签到"}
         </button>
         <button class="btn" type="button" data-play ${save.coins < ENTRY_FEE ? "disabled" : ""}>
-          单机牌桌（-${ENTRY_FEE}）
+          积分赛（-${ENTRY_FEE}）
         </button>
+        <button class="btn cash" type="button" data-cash>金币场</button>
         <button class="btn online" type="button" data-online>朋友联机大厅</button>
         <button class="btn secondary" type="button" data-shop>皮肤商城</button>
         <p class="hint">冠军 ${PRIZE[1]} · 第4名 ${PRIZE[4]}（净+${PRIZE[4] - ENTRY_FEE}）</p>
@@ -193,11 +211,16 @@ export function boot(root: HTMLElement) {
       save.coins -= ENTRY_FEE;
       writeSave(save);
       onlineMatch = false;
+      cashId = null;
       t = createTournament();
       startHand(t);
       resetTableRuntime();
       go("table");
       schedule();
+    });
+    root.querySelector("[data-cash]")?.addEventListener("click", () => {
+      unlockAudio();
+      go("cash");
     });
     root.querySelector("[data-online]")?.addEventListener("click", () => {
       unlockAudio();
@@ -208,6 +231,130 @@ export function boot(root: HTMLElement) {
       void enterOnlineLobby();
     });
     root.querySelector("[data-shop]")?.addEventListener("click", () => go("shop"));
+  }
+
+  function cashLevel() {
+    return CASH_TABLES.find((x) => x.id === cashId) ?? null;
+  }
+
+  function renderCash() {
+    const cards = CASH_TABLES.map((lv) => {
+      const ok = save.coins >= lv.buyin;
+      return `<button class="stake" type="button" data-stake="${lv.id}" ${ok ? "" : "disabled"}>
+        <span class="stake-name">${lv.name}</span>
+        <span class="stake-blind">盲注 ${lv.sb}/${lv.bb}</span>
+        <span class="stake-buy">买入 ${lv.buyin}</span>
+      </button>`;
+    }).join("");
+    root.innerHTML = `
+      <div class="lobby">
+        <h1>金币场</h1>
+        <p>准备沿用上一局剩下的筹码。旁边的重新买入才会扣金币，换成一叠新筹码。弃牌或结算后可以退出，桌上筹码兑回金币。</p>
+        <div class="coins">金币 <strong>${save.coins}</strong></div>
+        <div class="stake-list">${cards}</div>
+        <button class="btn secondary" type="button" data-back>返回菜单</button>
+      </div>`;
+    root.querySelector("[data-back]")?.addEventListener("click", () => go("lobby"));
+    root.querySelectorAll("[data-stake]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const id = (btn as HTMLElement).dataset.stake as CashTableId;
+        const lv = CASH_TABLES.find((x) => x.id === id);
+        if (!lv || save.coins < lv.buyin) return;
+        unlockAudio();
+        openCashTable(lv.id);
+      });
+    });
+  }
+
+  function openCashTable(id: CashTableId) {
+    const lv = CASH_TABLES.find((x) => x.id === id);
+    if (!lv) return;
+    onlineMatch = false;
+    cashId = id;
+    cashBuyin = lv.buyin;
+    cashPaid = true;
+    cashNet = null;
+    cashStackAtStart = 0;
+    cashPhase = "ready";
+    t = createTournament();
+    for (const s of t.seats) s.chips = s.isHuman ? 0 : lv.buyin;
+    resetTableRuntime();
+    go("table");
+  }
+
+  function humanTableChips(): number {
+    if (!t) return 0;
+    if (cashPhase === "play" && t.engine) {
+      return t.engine.players[t.localSeat]?.chips ?? 0;
+    }
+    return t.seats[t.localSeat]?.chips ?? 0;
+  }
+
+  function readyCashHand() {
+    const lv = cashLevel();
+    if (!t || !lv || cashPhase !== "ready") return;
+    const stack = t.seats[t.localSeat]?.chips ?? 0;
+    if (stack <= 0) return;
+    cashBuyin = lv.buyin;
+    cashStackAtStart = stack;
+    cashNet = null;
+    cashPhase = "play";
+    prizePaid = false;
+    lastMsg = "";
+    animHand = -1;
+    holesShown = Array(8).fill(0);
+    boardShown = 0;
+    beginCashHand(t, lv.sb, lv.bb, lv.buyin);
+    updateTable(true);
+    schedule();
+  }
+
+  /** 把桌上剩下的筹码兑回金币。已经兑过就不再加。 */
+  function cashOutStack() {
+    if (!t || cashPaid || !cashId) return;
+    const chips = humanTableChips();
+    save.coins += chips;
+    if (t.engine) t.engine.players[t.localSeat].chips = 0;
+    t.seats[t.localSeat].chips = 0;
+    cashPaid = true;
+    writeSave(save);
+  }
+
+  /** 兑回当前筹码，再扣一整叠买入额。 */
+  function rebuyCash() {
+    const lv = cashLevel();
+    if (!t || !lv || cashPhase !== "ready") return;
+    const seat = t.seats[t.localSeat];
+    if (!seat) return;
+    if (save.coins + seat.chips < lv.buyin) return;
+    save.coins = save.coins + seat.chips - lv.buyin;
+    seat.chips = lv.buyin;
+    cashBuyin = lv.buyin;
+    cashPaid = false;
+    writeSave(save);
+    updateTable(false);
+  }
+
+  function settleCashHand() {
+    if (!t?.engine || !cashId || cashPhase !== "play" || t.engine.street !== "done") return;
+    syncChipsFromEngine(t);
+    for (const s of t.seats) s.place = null;
+    const chips = t.seats[t.localSeat]?.chips ?? 0;
+    cashNet = chips - cashStackAtStart;
+    cashPhase = "ready";
+  }
+
+  function leaveCashTable() {
+    if (timer) {
+      clearTimeout(timer);
+      timer = null;
+    }
+    busy = false;
+    if (!cashPaid) cashOutStack();
+    t = null;
+    cashId = null;
+    cashPhase = "ready";
+    go("lobby");
   }
 
   function renderOnlineSetup() {
@@ -396,6 +543,7 @@ export function boot(root: HTMLElement) {
     writeSave(save);
     const mySeat = roomH?.getMySeat() ?? humans.find((h) => h.playerId === getPlayerId())?.seat ?? 0;
     onlineMatch = true;
+    cashId = null;
     t = createTournament({ humans, localSeat: mySeat });
     resetTableRuntime();
     go("table");
@@ -631,7 +779,7 @@ export function boot(root: HTMLElement) {
 
     screenEl.addEventListener("click", (ev) => {
       const el = (ev.target as HTMLElement).closest(
-        "[data-act],[data-nexthand],[data-result],[data-raise-ok],[data-raise-cancel]",
+        "[data-act],[data-nexthand],[data-result],[data-raise-ok],[data-raise-cancel],[data-cash-ready],[data-cash-rebuy],[data-leave]",
       ) as HTMLElement | null;
       if (!el || !t) return;
 
@@ -649,6 +797,18 @@ export function boot(root: HTMLElement) {
       }
       if (el.dataset.nexthand !== undefined) {
         finishOrNextHand();
+        return;
+      }
+      if (el.dataset.cashReady !== undefined) {
+        readyCashHand();
+        return;
+      }
+      if (el.dataset.cashRebuy !== undefined) {
+        rebuyCash();
+        return;
+      }
+      if (el.dataset.leave !== undefined) {
+        leaveCashTable();
         return;
       }
       if (el.dataset.act && t.engine && !busy) {
@@ -947,13 +1107,19 @@ export function boot(root: HTMLElement) {
     ensureTableShell();
     queueDealAnimations();
     const e = t.engine;
-    const [sb, bb] = blindsForHand(Math.max(1, t.hand));
+    if (cashId && e?.street === "done") settleCashHand();
+    const level = cashLevel();
+    const [sb, bb] = level ? [level.sb, level.bb] : blindsForHand(Math.max(1, t.hand));
     const local = t.localSeat;
 
     const handEl = root.querySelector("[data-hud-hand]");
     const blindEl = root.querySelector("[data-hud-blind]");
     const coinsEl = root.querySelector("[data-hud-coins]");
-    if (handEl) handEl.innerHTML = `第 <strong>${t.hand}</strong> / ${MAX_HANDS} 把`;
+    if (handEl) {
+      handEl.innerHTML = level
+        ? `金币 · <strong>${level.name}</strong>`
+        : `第 <strong>${t.hand}</strong> / ${MAX_HANDS} 把`;
+    }
     if (blindEl) blindEl.innerHTML = `盲注 <strong>${sb}/${bb}</strong>`;
     if (coinsEl) coinsEl.innerHTML = `金币 <strong>${save.coins}</strong>`;
 
@@ -961,11 +1127,29 @@ export function boot(root: HTMLElement) {
     const msg = root.querySelector("[data-msg]");
     if (msg) msg.textContent = msgText;
     const line = root.querySelector("[data-dealer-line]");
-    if (line && msgText && msgText !== lastMsg) {
+    if (line && cashId && cashPhase === "ready") {
+      const stack = t.seats[local]?.chips ?? 0;
+      const result =
+        cashNet == null
+          ? ""
+          : cashNet > 0
+            ? `本局赢 ${cashNet} 筹码。`
+            : cashNet < 0
+              ? `本局输 ${-cashNet} 筹码。`
+              : "本局不赚不亏。";
+      const note =
+        stack <= 0
+          ? `${result}筹码已空，重新买入 ${level?.buyin ?? 0} 后再准备`
+          : `${result}现有 ${stack} 筹码，准备沿用这叠`;
+      if (note !== lastMsg) {
+        line.textContent = note;
+        lastMsg = note;
+      }
+    } else if (line && msgText && msgText !== lastMsg) {
       line.textContent = msgText;
       pokeDealer("talk");
+      lastMsg = msgText;
     }
-    lastMsg = msgText;
 
     const potEl = root.querySelector("[data-pot]");
     const potNow = e?.pot ?? 0;
@@ -999,10 +1183,10 @@ export function boot(root: HTMLElement) {
       const node = root.querySelector(`[data-seat="${i}"]`) as HTMLElement | null;
       if (!node) return;
       const ep = e?.players[i];
-      const chips = ep ? ep.chips : s.chips;
+      const chips = cashId && cashPhase === "ready" ? s.chips : ep ? ep.chips : s.chips;
       const bet = ep?.bet ?? 0;
       const folded = !!(ep?.folded || s.place !== null);
-      const out = s.place !== null || (ep?.out ?? (s.chips <= 0 && !e));
+      const out = cashId ? false : s.place !== null || (ep?.out ?? (s.chips <= 0 && !e));
       const turn = !!(e && e.street !== "done" && e.toAct === i);
       const isYou = i === local;
 
@@ -1028,7 +1212,7 @@ export function boot(root: HTMLElement) {
 
       const betChip = node.querySelector("[data-bet-chip]") as HTMLElement | null;
       if (betChip) {
-        if (bet > 0 && !out) {
+        if (bet > 0 && !out && !(cashId && cashPhase === "ready")) {
           betChip.hidden = false;
           betChip.textContent = String(bet);
         } else {
@@ -1064,6 +1248,20 @@ export function boot(root: HTMLElement) {
     if (actions && !raiseOpen) {
       if (dealingHoles || dealingBoard) {
         actions.innerHTML = `<button class="btn secondary" type="button" disabled>发牌中…</button>`;
+      } else if (cashId && cashPhase === "ready") {
+        const buy = level?.buyin ?? 0;
+        const stack = t.seats[local]?.chips ?? 0;
+        const canReady = stack > 0;
+        const canRebuy = save.coins + stack >= buy;
+        const rebuyLabel = stack > 0 ? `重新买入（换成 ${buy}）` : `重新买入（-${buy}）`;
+        actions.innerHTML = `
+          <button class="btn" type="button" data-cash-ready ${canReady ? "" : "disabled"}>准备${canReady ? `（${stack}）` : ""}</button>
+          <button class="btn cash" type="button" data-cash-rebuy ${canRebuy ? "" : "disabled"}>${rebuyLabel}</button>
+          <button class="btn secondary" type="button" data-leave>退出</button>`;
+      } else if (cashId && e && e.street !== "done" && e.players[local]?.folded) {
+        actions.innerHTML = `
+          <button class="btn secondary" type="button" disabled>已弃牌</button>
+          <button class="btn secondary" type="button" data-leave>退出</button>`;
       } else {
       const myTurn = isHumanTurn(t);
       const acts =
@@ -1097,7 +1295,7 @@ export function boot(root: HTMLElement) {
       }
     }
 
-    if (!onlineMatch && e?.street === "done" && isHumanBusted(t) && !t.over && !autoSettleScheduled) {
+    if (!onlineMatch && !cashId && e?.street === "done" && isHumanBusted(t) && !t.over && !autoSettleScheduled) {
       autoSettleScheduled = true;
       const lineEl = root.querySelector("[data-dealer-line]");
       if (lineEl) lineEl.textContent = "你已淘汰，正在结算…";
@@ -1197,6 +1395,7 @@ export function boot(root: HTMLElement) {
       return;
     }
     if (t.engine.street === "done") {
+      if (cashId) settleCashHand();
       updateTable(false);
       if (pauseForDeal()) return;
       busy = false;
