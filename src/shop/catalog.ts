@@ -16,9 +16,9 @@ export const SKINS: SkinItem[] = [
   { id: "card_default", type: "card", name: "经典牌背", price: 0 },
   { id: "card_ruby", type: "card", name: "红宝石背", price: SKIN_PRICE.common },
   { id: "card_ink", type: "card", name: "墨竹牌背", price: SKIN_PRICE.legend },
-  { id: "dealer_default", type: "dealer", name: "小蕾", price: 0 },
-  { id: "dealer_cool", type: "dealer", name: "粉铃", price: SKIN_PRICE.common },
-  { id: "dealer_queen", type: "dealer", name: "紫苑", price: SKIN_PRICE.rare },
+  { id: "dealer_default", type: "dealer", name: "日和", price: 0 },
+  { id: "dealer_cool", type: "dealer", name: "春", price: SKIN_PRICE.common },
+  { id: "dealer_queen", type: "dealer", name: "艾普西隆", price: SKIN_PRICE.rare },
 ];
 
 export const DEFAULT_EQUIP = {

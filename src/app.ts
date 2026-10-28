@@ -55,7 +55,7 @@ import {
   writeSave,
 } from "./store";
 import { SEAT_POS } from "./ui/seats";
-import { aimDealer, flyDealCard, resetDealerAim } from "./ui/dealerDeal";
+import { dealFromHand } from "./ui/dealerDeal";
 import {
   destroyLive2D,
   lookLive2DAt,
@@ -658,7 +658,11 @@ export function boot(root: HTMLElement) {
         })
         .join("");
       const title = type === "table" ? "牌桌" : type === "card" ? "卡片" : "荷官";
-      return `<section class="shop-sec"><h2>${title}</h2><div class="shop-grid">${items}</div></section>`;
+      const note =
+        type === "dealer"
+          ? `<p class="shop-note">本内容使用了 Live2D Inc. 享有版权的样本数据。样本数据依照 Live2D Inc. 规定的条款使用。本内容本身由作者独立创作。</p>`
+          : "";
+      return `<section class="shop-sec"><h2>${title}</h2><div class="shop-grid">${items}</div>${note}</section>`;
     });
 
     root.innerHTML = `
@@ -701,7 +705,7 @@ export function boot(root: HTMLElement) {
     const theme = save.equip.table;
     const dealer = save.equip.dealer;
     const dealerMod = dealer.replace(/^dealer_/, "dealer-");
-    const dealerArt = `./dealers/${dealer}${dealer === "dealer_default" ? ".jpg" : ".png"}`;
+    const dealerArt = `./dealers/${dealer}.jpg`;
     const seats = Array.from({ length: 8 }, (_, i) => {
       const pos = SEAT_POS[i];
       return `<div class="seat" data-seat="${i}" style="left:${pos.x}%;top:${pos.y}%">
@@ -1036,12 +1040,10 @@ export function boot(root: HTMLElement) {
     const layer = root.querySelector("[data-deal-fx]") as HTMLElement | null;
     if (!from || !layer || !target) return;
     if (live) lookLive2DAt(target as HTMLElement);
-    else if (portrait) aimDealer(portrait, target as HTMLElement);
-    await flyDealCard(layer, from, target as HTMLElement, `skin-${save.equip.card}`);
+    await dealFromHand(layer, from, target as HTMLElement, `skin-${save.equip.card}`);
   }
 
   function releaseDealerAim() {
-    resetDealerAim(root.querySelector(".dealer-portrait"));
     resetLive2DLook();
   }
 
