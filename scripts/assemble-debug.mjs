@@ -6,6 +6,23 @@ import { homedir } from "node:os";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const androidDir = join(root, "android");
+const patchedTts = join(root, "android", "tts-pitch", "TextToSpeech.java");
+const pluginTts = join(
+  root,
+  "node_modules",
+  "@capacitor-community",
+  "text-to-speech",
+  "android",
+  "src",
+  "main",
+  "java",
+  "com",
+  "getcapacitor",
+  "community",
+  "tts",
+  "TextToSpeech.java",
+);
+if (existsSync(patchedTts)) copyFileSync(patchedTts, pluginTts);
 const isWin = process.platform === "win32";
 const gradlew = join(androidDir, isWin ? "gradlew.bat" : "gradlew");
 

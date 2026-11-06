@@ -5,6 +5,46 @@ import type { Action } from "./game/engine";
 let unlocked = false;
 let ctx: AudioContext | null = null;
 const useNativeTts = Capacitor.isNativePlatform();
+/** 播放时再抬高。安卓很多语音引擎会忽略合成时的音调。 */
+const CUTE_PITCH = 1.6;
+const CUTE_RATE = 0.9;
+let cuteVoice: number | undefined;
+
+function isChineseVoice(lang: string, name = "") {
+  return /zh|cmn|chinese|中文/i.test(`${lang} ${name}`);
+}
+
+function cuteVoiceScore(name: string, lang: string, voiceURI = "", local = false, isDefault = false) {
+  const blob = `${name} ${voiceURI}`;
+  if (!isChineseVoice(lang, blob)) return -1;
+  let score = 1;
+  if (/xiaoxiao|xiaoyi|xiaoyan|xiaoshuang|yaoyao|tingting|huihui|female|girl|女|ssa/i.test(blob)) score += 6;
+  if (/yunxi|yunyang|yunjian|yunhao|kangkang|male|男|ccd/i.test(blob)) score -= 8;
+  if (local) score += 1;
+  if (isDefault) score += 0.5;
+  return score;
+}
+
+async function ensureCuteVoice() {
+  if (cuteVoice !== undefined) return cuteVoice;
+  try {
+    const { voices } = await TextToSpeech.getSupportedVoices();
+    if (!voices.length) return -1;
+    let best = -1;
+    let bestScore = 0;
+    voices.forEach((voice, index) => {
+      const score = cuteVoiceScore(voice.name, voice.lang, voice.voiceURI, voice.localService, voice.default);
+      if (score > bestScore) {
+        bestScore = score;
+        best = index;
+      }
+    });
+    cuteVoice = best;
+  } catch {
+    cuteVoice = -1;
+  }
+  return cuteVoice;
+}
 
 function getCtx(): AudioContext | null {
   const AC = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
@@ -20,15 +60,18 @@ export function unlockAudio() {
   void c?.resume();
   if (useNativeTts) {
     // 预热原生 TTS 引擎，避免第一句被吞
-    void TextToSpeech.speak({
-      text: "。",
-      lang: "zh-CN",
-      rate: 1.1,
-      pitch: 1.1,
-      volume: 0.01,
-      category: "playback",
-      queueStrategy: 1,
-    }).catch(() => undefined);
+    void ensureCuteVoice().then((voice) =>
+      TextToSpeech.speak({
+        text: "。",
+        lang: "zh-CN",
+        rate: CUTE_RATE,
+        pitch: CUTE_PITCH,
+        volume: 0.01,
+        category: "playback",
+        queueStrategy: 1,
+        ...(voice >= 0 ? { voice } : {}),
+      }).catch(() => undefined),
+    );
     return;
   }
   try {
@@ -90,16 +133,24 @@ export function playDealSfx() {
 }
 
 async function speakNative(line: string): Promise<void> {
+  const voice = await ensureCuteVoice();
   await TextToSpeech.stop().catch(() => undefined);
-  await TextToSpeech.speak({
+  let failed: unknown;
+  const spoken = TextToSpeech.speak({
     text: line,
     lang: "zh-CN",
-    rate: 1.05,
-    pitch: 1.12,
+    rate: CUTE_RATE,
+    pitch: CUTE_PITCH,
     volume: 1,
     category: "playback",
     queueStrategy: 1,
+    ...(voice >= 0 ? { voice } : {}),
+  }).catch((error: unknown) => {
+    failed = error;
   });
+  const cap = Math.min(12000, 1600 + line.length * 420);
+  await Promise.race([spoken, new Promise((resolve) => window.setTimeout(resolve, cap))]);
+  if (failed) throw failed;
 }
 
 function speakWeb(line: string): Promise<void> {
@@ -119,16 +170,18 @@ function speakWeb(line: string): Promise<void> {
         window.speechSynthesis.cancel();
         const u = new SpeechSynthesisUtterance(line);
         u.lang = "zh-CN";
-        u.rate = 1.08;
-        u.pitch = 1.15;
+        u.rate = CUTE_RATE;
+        u.pitch = CUTE_PITCH;
         u.volume = 1;
         const voices = window.speechSynthesis.getVoices();
-        const zh =
-          voices.find(
-            (v) =>
-              /zh-CN|zh_CN|Chinese|中文/.test(v.lang) &&
-              /female|女|Xiaoyi|Xiaoxiao|Tingting|Huihui/i.test(v.name),
-          ) || voices.find((v) => /zh-CN|zh_CN|Chinese|中文/.test(v.lang));
+        const ranked = voices
+          .map((voice) => ({
+            voice,
+            score: cuteVoiceScore(voice.name, voice.lang, voice.voiceURI, voice.localService, voice.default),
+          }))
+          .filter((item) => item.score > 0)
+          .sort((a, b) => b.score - a.score);
+        const zh = ranked[0]?.voice;
         if (zh) u.voice = zh;
         u.onend = done;
         u.onerror = done;
